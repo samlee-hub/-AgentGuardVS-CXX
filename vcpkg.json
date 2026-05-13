@@ -1,0 +1,10 @@
+{
+  "name": "agentguardvs-cxx",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "nlohmann-json",
+    "cli11",
+    "spdlog",
+    "gtest"
+  ]
+}

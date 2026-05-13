@@ -1,0 +1,17 @@
+# Build outputs
+/build/
+/out/
+/.vs/
+
+# Runtime artifacts
+/runs/*
+!/runs/.gitkeep
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Python cache
+__pycache__/
+*.pyc
