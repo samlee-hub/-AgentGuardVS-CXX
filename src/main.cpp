@@ -4,8 +4,15 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <Windows.h>
+#endif
 
 #include <CLI/App.hpp>
 #include <CLI/Config.hpp>
@@ -40,6 +47,47 @@ struct RunOptions
     bool no_llm = false;
     bool force = false;
 };
+
+#ifdef _WIN32
+std::string WideToUtf8(const std::wstring& value)
+{
+    if (value.empty())
+    {
+        return {};
+    }
+
+    const int required_size = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        value.c_str(),
+        static_cast<int>(value.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    if (required_size <= 0)
+    {
+        throw std::runtime_error("WideCharToMultiByte failed.");
+    }
+
+    std::string result(static_cast<std::size_t>(required_size), '\0');
+    const int converted = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        value.c_str(),
+        static_cast<int>(value.size()),
+        result.data(),
+        required_size,
+        nullptr,
+        nullptr);
+    if (converted != required_size)
+    {
+        throw std::runtime_error("WideCharToMultiByte produced an unexpected byte count.");
+    }
+
+    return result;
+}
+#endif
 
 std::string SanitizeTaskIdPart(std::string value)
 {
@@ -341,7 +389,7 @@ int RunCommand(const RunOptions& options)
 }
 } // namespace
 
-int main(int argc, char** argv)
+int AppMain(int argc, char** argv)
 {
     CLI::App app{"AgentGuardVS-CXX"};
     app.set_version_flag("--version", "AgentGuardVS-CXX 0.1.0");
@@ -375,3 +423,37 @@ int main(int argc, char** argv)
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv)
+{
+    try
+    {
+        std::vector<std::string> utf8_args;
+        utf8_args.reserve(static_cast<std::size_t>(argc));
+        for (int index = 0; index < argc; ++index)
+        {
+            utf8_args.push_back(WideToUtf8(argv[index]));
+        }
+
+        std::vector<char*> utf8_argv;
+        utf8_argv.reserve(utf8_args.size());
+        for (auto& arg : utf8_args)
+        {
+            utf8_argv.push_back(arg.data());
+        }
+
+        return AppMain(static_cast<int>(utf8_argv.size()), utf8_argv.data());
+    }
+    catch (const std::exception& exception)
+    {
+        std::cerr << exception.what() << "\n";
+        return 1;
+    }
+}
+#else
+int main(int argc, char** argv)
+{
+    return AppMain(argc, argv);
+}
+#endif
