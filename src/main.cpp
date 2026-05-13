@@ -429,6 +429,9 @@ int wmain(int argc, wchar_t** argv)
 {
     try
     {
+        SetConsoleCP(CP_UTF8);
+        SetConsoleOutputCP(CP_UTF8);
+
         std::vector<std::string> utf8_args;
         utf8_args.reserve(static_cast<std::size_t>(argc));
         for (int index = 0; index < argc; ++index)

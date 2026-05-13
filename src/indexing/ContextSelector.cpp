@@ -28,6 +28,44 @@ std::vector<std::string> Tokenize(const std::string& text)
     return tokens;
 }
 
+void AddTokenIfContains(
+    const std::string& text,
+    const std::string& utf8_phrase,
+    std::vector<std::string>& tokens,
+    std::initializer_list<const char*> hints)
+{
+    if (text.find(utf8_phrase) == std::string::npos)
+    {
+        return;
+    }
+
+    for (const char* hint : hints)
+    {
+        tokens.emplace_back(hint);
+    }
+}
+
+std::vector<std::string> BuildRequestTokens(const std::string& text)
+{
+    std::vector<std::string> tokens = Tokenize(text);
+
+    AddTokenIfContains(text, "\xE5\x8F\xAC\xE5\x94\xA4", tokens, {"summon"});
+    AddTokenIfContains(text, "\xE8\xB5\x84\xE6\xBA\x90", tokens, {"resource", "cost"});
+    AddTokenIfContains(text, "\xE6\xB6\x88\xE8\x80\x97", tokens, {"cost", "consume"});
+    AddTokenIfContains(text, "\xE5\x86\xB7\xE5\x8D\xB4", tokens, {"cooldown"});
+    AddTokenIfContains(text, "\xE5\x8C\xB9\xE9\x85\x8D", tokens, {"match", "matchmaking"});
+    AddTokenIfContains(text, "\xE6\x88\x98\xE6\x96\x97", tokens, {"battle"});
+    AddTokenIfContains(text, "\xE6\x88\xBF\xE9\x97\xB4", tokens, {"room"});
+    AddTokenIfContains(text, "\xE7\x8A\xB6\xE6\x80\x81", tokens, {"status", "state"});
+    AddTokenIfContains(text, "\xE7\x99\xBB\xE5\xBD\x95", tokens, {"login", "auth"});
+    AddTokenIfContains(text, "\xE9\x85\x8D\xE7\xBD\xAE", tokens, {"config"});
+    AddTokenIfContains(text, "\xE8\xAE\xB0\xE5\xBD\x95", tokens, {"record", "log"});
+
+    std::sort(tokens.begin(), tokens.end());
+    tokens.erase(std::unique(tokens.begin(), tokens.end()), tokens.end());
+    return tokens;
+}
+
 bool ContainsToken(const std::string& haystack, const std::string& needle)
 {
     std::string lowered = haystack;
@@ -65,7 +103,7 @@ std::vector<ContextCandidate> SelectRelevantFiles(
     const std::string& user_request,
     const std::vector<SourceFileInfo>& files)
 {
-    const auto request_tokens = Tokenize(user_request);
+    const auto request_tokens = BuildRequestTokens(user_request);
     std::vector<ContextCandidate> candidates;
 
     for (const auto& file : files)

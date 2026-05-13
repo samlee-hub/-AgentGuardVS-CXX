@@ -62,4 +62,30 @@ TEST(ContextSelectorTest, ReportsReasonsForFilenameClassFunctionAndIncludeMatche
         std::find(candidate.reasons.begin(), candidate.reasons.end(), "include:rules"),
         candidate.reasons.end());
 }
+
+TEST(ContextSelectorTest, ChineseSummonTaskAddsDomainHints)
+{
+    SourceFileInfo summon;
+    summon.file_path = "IndexingSample\\Game\\Summon.cpp";
+    summon.classes = {"SummonController"};
+    summon.functions = {"CanSummon", "ResetCooldown"};
+
+    SourceFileInfo battle;
+    battle.file_path = "IndexingSample\\Engine\\Battle.cc";
+    battle.functions = {"TickBattle"};
+
+    const std::string chinese_task =
+        "\xE4\xB8\xBA\xE5\x8F\xAC\xE5\x94\xA4\xE5\x8A\x9F\xE8\x83\xBD"
+        "\xE5\xA2\x9E\xE5\x8A\xA0\xE8\xB5\x84\xE6\xBA\x90\xE6\xB6\x88"
+        "\xE8\x80\x97\xE5\x92\x8C\xE5\x85\xA8\xE5\xB1\x80\x33\xE7\xA7"
+        "\x92\xE5\x86\xB7\xE5\x8D\xB4";
+
+    const auto candidates = SelectRelevantFiles(chinese_task, {battle, summon});
+
+    ASSERT_FALSE(candidates.empty());
+    EXPECT_EQ(candidates.front().file_path, "IndexingSample\\Game\\Summon.cpp");
+    EXPECT_NE(
+        std::find(candidates.front().reasons.begin(), candidates.front().reasons.end(), "filename:summon"),
+        candidates.front().reasons.end());
+}
 } // namespace
