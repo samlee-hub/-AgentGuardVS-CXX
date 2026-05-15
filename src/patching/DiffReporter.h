@@ -13,6 +13,9 @@ struct DiffReport
     bool success = false;
     std::string diff_text;
     std::string diff_stat;
+    std::filesystem::path git_top_level;
+    std::string diff_base;
+    bool workspace_modified = false;
     std::vector<std::string> warnings;
 };
 

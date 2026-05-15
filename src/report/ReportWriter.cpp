@@ -38,6 +38,21 @@ void WriteList(std::ofstream& output, const std::vector<std::string>& values)
     }
 }
 
+void WriteSemanticFiles(std::ofstream& output, const std::vector<SemanticFileReference>& values)
+{
+    if (values.empty())
+    {
+        output << "- None\n";
+        return;
+    }
+
+    for (const auto& value : values)
+    {
+        output << "- " << value.path << " confidence=" << value.confidence
+               << " reason=" << value.reason << "\n";
+    }
+}
+
 nlohmann::json ToJson(const PatchApplyResult& result)
 {
     return nlohmann::json{
@@ -70,6 +85,14 @@ ReportWriteResult WriteReport(const ReportWriteRequest& request)
         markdown << "## Target\n";
         markdown << "- Solution: " << request.task_spec.target_solution << "\n";
         markdown << "- Project: " << request.task_spec.target_project << "\n\n";
+        markdown << "## Workspace Audit\n";
+        markdown << "- Source project: " << request.source_project.generic_string() << "\n";
+        markdown << "- Workspace repo: " << request.workspace_repo.generic_string() << "\n";
+        markdown << "- Git top-level: " << request.diff_report.git_top_level.generic_string() << "\n";
+        markdown << "- Diff base: " << request.diff_report.diff_base << "\n";
+        markdown << "- Source modified: " << request.source_modified << "\n";
+        markdown << "- Workspace modified: "
+                 << (request.diff_report.workspace_modified ? "true" : "false") << "\n\n";
 
         markdown << "## Related Files\n";
         WriteList(markdown, request.related_files);
@@ -77,6 +100,31 @@ ReportWriteResult WriteReport(const ReportWriteRequest& request)
         WriteList(markdown, request.task_spec.allowed_files);
         markdown << "\n## Forbidden Files\n";
         WriteList(markdown, request.task_spec.forbidden_files);
+
+        if (request.task_spec.has_semantic_scope)
+        {
+            markdown << "\n## Semantic Scope\n";
+            markdown << "- Risk level: " << request.task_spec.semantic_scope.risk_level << "\n";
+            markdown << "- Recommendation: " << request.task_spec.semantic_scope.recommendation << "\n";
+            markdown << "- Blast radius: " << request.task_spec.semantic_scope.blast_radius << "\n";
+            markdown << "- Public interface changes: "
+                     << (request.task_spec.semantic_scope.public_interface_changes ? "true" : "false")
+                     << "\n";
+            markdown << "- Related symbols:\n";
+            WriteList(markdown, request.task_spec.semantic_scope.related_symbols);
+            markdown << "- Dependency reasons:\n";
+            WriteList(markdown, request.task_spec.semantic_scope.dependency_reasons);
+            markdown << "\n### Semantic Allowed Files\n";
+            WriteSemanticFiles(markdown, request.task_spec.semantic_scope.allowed_files);
+            markdown << "\n### Semantic Context Files\n";
+            WriteSemanticFiles(markdown, request.task_spec.semantic_scope.context_files);
+            markdown << "\n### Semantic Suspected Files\n";
+            WriteSemanticFiles(markdown, request.task_spec.semantic_scope.suspected_files);
+            markdown << "\n### Semantic Protected Files\n";
+            WriteSemanticFiles(markdown, request.task_spec.semantic_scope.protected_files);
+            markdown << "\n### Semantic Needs Approval Files\n";
+            WriteSemanticFiles(markdown, request.task_spec.semantic_scope.needs_approval_files);
+        }
 
         markdown << "\n## Patch Apply Result\n";
         markdown << "- Success: " << (request.patch_apply_result.success ? "true" : "false") << "\n";
@@ -116,9 +164,22 @@ ReportWriteResult WriteReport(const ReportWriteRequest& request)
     {
         const nlohmann::json json_value{
             {"task_spec", request.task_spec},
+            {"source_project", request.source_project.generic_string()},
+            {"workspace_repo", request.workspace_repo.generic_string()},
+            {"git_top_level", request.diff_report.git_top_level.generic_string()},
+            {"diff_base", request.diff_report.diff_base},
+            {"source_modified", request.source_modified},
+            {"workspace_modified", request.diff_report.workspace_modified},
             {"related_files", request.related_files},
             {"allowed_files", request.task_spec.allowed_files},
             {"forbidden_files", request.task_spec.forbidden_files},
+            {"context_files", request.task_spec.context_files},
+            {"suspected_files", request.task_spec.suspected_files},
+            {"protected_files", request.task_spec.protected_files},
+            {"needs_approval_files", request.task_spec.needs_approval_files},
+            {"semantic_scope", request.task_spec.has_semantic_scope
+                ? nlohmann::json(request.task_spec.semantic_scope)
+                : nlohmann::json(nullptr)},
             {"patch_apply_result", ToJson(request.patch_apply_result)},
             {"build_result", request.build_result},
             {"error_category_summary", error_summary},

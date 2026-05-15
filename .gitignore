@@ -2,6 +2,9 @@
 /build/
 /out/
 /.vs/
+**/x64/
+**/Win32/
+**/.vs/
 
 # Runtime artifacts
 /runs/*

@@ -1,12 +1,17 @@
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -21,12 +26,23 @@
 #include <nlohmann/json.hpp>
 
 #include "agents/RepairLoop.h"
+#include "agents/ReviewerAgent.h"
+#include "agents/SemanticAnalyzerAgent.h"
 #include "core/PathUtils.h"
 #include "core/Workspace.h"
+#include "diagnostics/ErrorParser.h"
 #include "indexing/ContextSelector.h"
 #include "indexing/CppSymbolIndexer.h"
+#include "indexing/DependencyGraph.h"
 #include "indexing/FileIndexer.h"
+#include "indexing/SymbolIndex.h"
+#include "llm/ClaudeProvider.h"
+#include "llm/DeepSeekProvider.h"
 #include "llm/FakeLLMProvider.h"
+#include "llm/FileLLMProvider.h"
+#include "llm/LLMProviderConfig.h"
+#include "llm/OpenAIProvider.h"
+#include "patching/DiffReporter.h"
 #include "report/ReportWriter.h"
 #include "vs/MSBuildRunner.h"
 #include "vs/SlnParser.h"
@@ -40,12 +56,55 @@ struct RunOptions
 {
     fs::path solution;
     std::string task;
+    std::string provider = "fake";
+    std::string model;
+    fs::path response_file;
     std::string configuration = "Debug";
     std::string platform = "x64";
-    fs::path runs_root = "runs";
+    fs::path runs_root;
+    std::string runs_root_source = "default";
+    int max_repair_rounds = 3;
     bool dry_run = false;
     bool no_llm = false;
     bool force = false;
+    bool json = false;
+};
+
+struct LlmSmokeOptions
+{
+    std::string input;
+    bool json = false;
+};
+
+struct AnalyzeOptions
+{
+    fs::path solution;
+    std::string task;
+    std::string provider = "fake";
+    std::string model;
+    fs::path response_file;
+    fs::path runs_root;
+    std::string runs_root_source = "default";
+    bool force = false;
+    bool json = false;
+};
+
+struct ReviewOptions
+{
+    fs::path workspace;
+    std::string task;
+    std::string provider = "fake";
+    std::string model;
+    fs::path response_file;
+    bool json = false;
+};
+
+struct VerifyOptions
+{
+    fs::path workspace;
+    std::string configuration = "Debug";
+    std::string platform = "x64";
+    bool json = false;
 };
 
 #ifdef _WIN32
@@ -116,6 +175,89 @@ std::string MakeTaskId(const fs::path& solution, const std::string& task)
     return stream.str();
 }
 
+fs::path DefaultRunsRoot()
+{
+#ifdef _WIN32
+    if (const char* local_app_data = std::getenv("LOCALAPPDATA");
+        local_app_data != nullptr && std::string(local_app_data).empty() == false)
+    {
+        return fs::path(local_app_data) / "AgentGuardVS" / "runs";
+    }
+#endif
+    return fs::temp_directory_path() / "AgentGuardVS" / "runs";
+}
+
+void ResolveRunsRoot(fs::path& runs_root, std::string& runs_root_source, const bool user_specified)
+{
+    runs_root_source = user_specified ? "user_specified" : "default";
+    if (runs_root.empty())
+    {
+        runs_root = DefaultRunsRoot();
+    }
+}
+
+nlohmann::json ErrorJson(
+    const std::string& command,
+    const std::string& error_code,
+    const std::string& message,
+    const std::string& suggestion)
+{
+    return nlohmann::json{
+        {"ok", false},
+        {"command", command},
+        {"error_code", error_code},
+        {"message", message},
+        {"suggestion", suggestion}
+    };
+}
+
+int EmitJsonError(
+    const std::string& command,
+    const std::string& error_code,
+    const std::string& message,
+    const std::string& suggestion)
+{
+    std::cout << ErrorJson(command, error_code, message, suggestion).dump() << "\n";
+    return 1;
+}
+
+std::string ClassifyExceptionError(const std::string& message)
+{
+    if (message.find("OPENAI_API_KEY") != std::string::npos ||
+        message.find("DEEPSEEK_API_KEY") != std::string::npos ||
+        message.find("ANTHROPIC_API_KEY") != std::string::npos)
+    {
+        return "API_KEY_MISSING";
+    }
+    if (message.find("MODEL") != std::string::npos || message.find("model") != std::string::npos)
+    {
+        return "MODEL_MISSING";
+    }
+    if (message.find("Unsupported AGENTGUARD_LLM_PROVIDER") != std::string::npos)
+    {
+        return "PROVIDER_UNSUPPORTED";
+    }
+    if (message.find("Git baseline failed") != std::string::npos)
+    {
+        return "GIT_BASELINE_FAILED";
+    }
+    if (message.find("Semantic analysis failed") != std::string::npos ||
+        message.find("Semantic review failed") != std::string::npos ||
+        message.find("parse") != std::string::npos)
+    {
+        return "INVALID_LLM_JSON";
+    }
+    if (message.find("protected") != std::string::npos)
+    {
+        return "PROTECTED_FILE_TOUCHED";
+    }
+    if (message.find("approval") != std::string::npos)
+    {
+        return "APPROVAL_REQUIRED";
+    }
+    return "REVIEW_REJECTED";
+}
+
 std::string ReadTextIfPresent(const fs::path& path)
 {
     std::ifstream input(path, std::ios::binary);
@@ -126,6 +268,23 @@ std::string ReadTextIfPresent(const fs::path& path)
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
+bool IsAlwaysProtectedPath(const std::string& path)
+{
+    std::string lowered = path;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](const unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowered.find(".git/") != std::string::npos ||
+           lowered.find("/third_party/") != std::string::npos ||
+           lowered.find("/external/") != std::string::npos ||
+           lowered.find("/build/") != std::string::npos ||
+           lowered.find("/generated/") != std::string::npos ||
+           lowered.starts_with("third_party/") ||
+           lowered.starts_with("external/") ||
+           lowered.starts_with("build/") ||
+           lowered.starts_with("generated/");
+}
+
 std::vector<std::string> SelectAllowedFiles(
     const std::vector<agentguard::ContextCandidate>& candidates,
     const std::vector<agentguard::SourceFileInfo>& files)
@@ -133,16 +292,29 @@ std::vector<std::string> SelectAllowedFiles(
     std::vector<std::string> allowed;
     for (const auto& candidate : candidates)
     {
-        allowed.push_back(fs::path(candidate.file_path).generic_string());
+        const auto normalized = fs::path(candidate.file_path).generic_string();
+        if (IsAlwaysProtectedPath(normalized))
+        {
+            continue;
+        }
+        allowed.push_back(normalized);
         if (allowed.size() >= 5)
         {
             break;
         }
     }
 
-    if (allowed.empty() && !files.empty())
+    for (const auto& file : files)
     {
-        allowed.push_back(fs::path(files.front().file_path).generic_string());
+        if (!allowed.empty())
+        {
+            break;
+        }
+        const auto normalized = fs::path(file.file_path).generic_string();
+        if (!IsAlwaysProtectedPath(normalized))
+        {
+            allowed.push_back(normalized);
+        }
     }
 
     return allowed;
@@ -157,7 +329,7 @@ std::vector<std::string> BuildForbiddenFiles(
     for (const auto& file : files)
     {
         const auto normalized = fs::path(file.file_path).generic_string();
-        if (!allowed_set.contains(normalized))
+        if (!allowed_set.contains(normalized) || IsAlwaysProtectedPath(normalized))
         {
             forbidden.push_back(normalized);
         }
@@ -185,6 +357,160 @@ std::vector<agentguard::RelevantFileContent> LoadRelevantFileContents(
     return contents;
 }
 
+void WriteTextFile(const fs::path& path, const std::string& content)
+{
+    agentguard::EnsureDirectory(path.parent_path());
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output)
+    {
+        throw std::runtime_error("Unable to write file: " + path.string());
+    }
+    output << content;
+}
+
+void WriteJsonOrRawText(const fs::path& path, const std::string& content)
+{
+    try
+    {
+        WriteTextFile(path, nlohmann::json::parse(content).dump(2));
+    }
+    catch (const std::exception&)
+    {
+        WriteTextFile(path, nlohmann::json{{"raw_text", content}}.dump(2));
+    }
+}
+
+nlohmann::json MakeFakeSemanticReviewJson()
+{
+    return nlohmann::json{
+        {"meets_requirement", true},
+        {"requires_scope_expansion", false},
+        {"suggested_scope_additions", nlohmann::json::array()},
+        {"risks", nlohmann::json::array()},
+        {"confidence", 0.75},
+        {"next_action", "accept"},
+        {"notes", nlohmann::json::array({"Generated by fake semantic review provider."})}
+    };
+}
+
+fs::path ResolveWorkspaceRepoRoot(const fs::path& workspace)
+{
+    const fs::path absolute_workspace = fs::absolute(workspace);
+    if (absolute_workspace.filename() == "repo")
+    {
+        return absolute_workspace;
+    }
+    if (fs::is_directory(absolute_workspace / "repo"))
+    {
+        return absolute_workspace / "repo";
+    }
+    return absolute_workspace;
+}
+
+fs::path ResolveTaskRootFromWorkspace(const fs::path& workspace)
+{
+    const fs::path absolute_workspace = fs::absolute(workspace);
+    if (absolute_workspace.filename() == "repo")
+    {
+        return absolute_workspace.parent_path();
+    }
+    return absolute_workspace;
+}
+
+fs::path FindFirstSolution(const fs::path& repo_root)
+{
+    if (!fs::exists(repo_root) || !fs::is_directory(repo_root))
+    {
+        return {};
+    }
+
+    for (const auto& entry : fs::recursive_directory_iterator(repo_root))
+    {
+        if (entry.is_regular_file() && entry.path().extension() == ".sln")
+        {
+            return entry.path();
+        }
+    }
+    return {};
+}
+
+agentguard::BuildResult LoadLatestBuildResult(const fs::path& task_root)
+{
+    const fs::path logs_root = task_root / "logs";
+    agentguard::BuildResult result;
+    result.success = true;
+    result.return_code = 0;
+    if (!fs::exists(logs_root))
+    {
+        return result;
+    }
+
+    fs::path latest_log;
+    fs::file_time_type latest_time{};
+    for (const auto& entry : fs::directory_iterator(logs_root))
+    {
+        if (!entry.is_regular_file() || entry.path().extension() != ".log")
+        {
+            continue;
+        }
+        const auto write_time = entry.last_write_time();
+        if (latest_log.empty() || write_time > latest_time)
+        {
+            latest_log = entry.path();
+            latest_time = write_time;
+        }
+    }
+
+    if (latest_log.empty())
+    {
+        return result;
+    }
+
+    result.stdout_text = ReadTextIfPresent(latest_log);
+    result.command = latest_log.string();
+    if (result.stdout_text.find("Return code: 0") == std::string::npos)
+    {
+        result.success = false;
+        result.return_code = 1;
+    }
+    result.parsed_errors = agentguard::ParseBuildErrors(result);
+    return result;
+}
+
+void AppendReviewFiles(
+    std::vector<std::string>& paths,
+    const std::vector<agentguard::SemanticFileReference>& files)
+{
+    for (const auto& file : files)
+    {
+        if (std::find(paths.begin(), paths.end(), file.path) == paths.end())
+        {
+            paths.push_back(file.path);
+        }
+    }
+}
+
+std::vector<agentguard::RelevantFileContent> LoadSemanticReviewFileContents(
+    const fs::path& repo_root,
+    const agentguard::SemanticScopeResult& scope)
+{
+    std::vector<std::string> paths;
+    AppendReviewFiles(paths, scope.allowed_files);
+    AppendReviewFiles(paths, scope.context_files);
+    AppendReviewFiles(paths, scope.suspected_files);
+
+    std::vector<agentguard::RelevantFileContent> contents;
+    for (const auto& path_text : paths)
+    {
+        const auto safe_path = agentguard::SafeRelativePath(fs::path(path_text));
+        contents.push_back(agentguard::RelevantFileContent{
+            safe_path.generic_string(),
+            ReadTextIfPresent(repo_root / safe_path)
+        });
+    }
+    return contents;
+}
+
 nlohmann::json MakePlannerJson(
     const std::string& task_id,
     const RunOptions& options,
@@ -204,7 +530,51 @@ nlohmann::json MakePlannerJson(
             "Build verification is used before completion.",
             "PatchApplier remains the only file mutation path."
         })},
-        {"max_repair_rounds", 3}
+        {"max_repair_rounds", options.max_repair_rounds}
+    };
+}
+
+nlohmann::json MakeFakeSemanticScopeJson(
+    const std::string& task,
+    const std::vector<std::string>& static_allowed_files,
+    const std::vector<std::string>& static_forbidden_files,
+    const agentguard::ImpactAnalysis& impact = {})
+{
+    nlohmann::json allowed = nlohmann::json::array();
+    for (const auto& path : static_allowed_files)
+    {
+        allowed.push_back({
+            {"path", path},
+            {"reason", "Selected by static context analysis."},
+            {"confidence", 0.8}
+        });
+    }
+
+    nlohmann::json protected_files = nlohmann::json::array();
+    for (const auto& path : static_forbidden_files)
+    {
+        protected_files.push_back({
+            {"path", path},
+            {"reason", "Not selected by static context analysis."},
+            {"confidence", 0.7}
+        });
+    }
+
+    return nlohmann::json{
+        {"task_summary", task},
+        {"allowed_files", allowed},
+        {"context_files", nlohmann::json::array()},
+        {"suspected_files", nlohmann::json::array()},
+        {"protected_files", protected_files},
+        {"needs_approval_files", nlohmann::json::array()},
+        {"risk_level", impact.public_header_risk ? "medium" : "low"},
+        {"recommendation", "proceed"},
+        {"related_symbols", impact.related_symbols},
+        {"dependency_reasons", impact.dependency_reasons},
+        {"blast_radius", impact.blast_radius},
+        {"public_interface_changes", impact.public_interface_changes},
+        {"missing_context", nlohmann::json::array()},
+        {"notes", nlohmann::json::array({"Generated by fake semantic analyzer provider."})}
     };
 }
 
@@ -260,13 +630,30 @@ void WriteDryRunReport(
 
 int RunCommand(const RunOptions& options)
 {
-    if (!options.no_llm)
+    const bool use_fake_provider = options.no_llm || options.provider == "fake";
+    if (!use_fake_provider)
     {
-        std::cerr << "Only --no-llm mode is implemented in this stage.\n";
+        if (options.json)
+        {
+            return EmitJsonError(
+                "run",
+                "PROVIDER_UNSUPPORTED",
+                "run currently supports --provider fake or --no-llm for patch execution.",
+                "Use analyze/review for real provider calls, or run with --provider fake.");
+        }
+        std::cerr << "run currently supports --provider fake or --no-llm for patch execution.\n";
         return 2;
     }
     if (!fs::exists(options.solution) || options.solution.extension() != ".sln")
     {
+        if (options.json)
+        {
+            return EmitJsonError(
+                "run",
+                "SOLUTION_PARSE_FAILED",
+                "--solution must point to an existing .sln file.",
+                "Pass the absolute path to a Visual Studio solution file.");
+        }
         std::cerr << "--solution must point to an existing .sln file.\n";
         return 2;
     }
@@ -319,6 +706,27 @@ int RunCommand(const RunOptions& options)
     planner_input.source_files = symbol_files;
     planner_input.context_candidates = candidates;
 
+    agentguard::SemanticAnalyzerInput semantic_input;
+    semantic_input.user_request = options.task;
+    semantic_input.solution_path = workspace_solution;
+    semantic_input.project_info = project_info;
+    semantic_input.source_files = symbol_files;
+    semantic_input.context_candidates = candidates;
+    semantic_input.relevant_files = LoadRelevantFileContents(workspace.repo_root, allowed_files);
+    semantic_input.static_allowed_files = allowed_files;
+    semantic_input.static_forbidden_files = forbidden_files;
+
+    const auto semantic_json = MakeFakeSemanticScopeJson(options.task, allowed_files, forbidden_files);
+    agentguard::FakeLLMProvider semantic_provider(semantic_json.dump(), semantic_json);
+    const auto semantic_result = agentguard::TryAnalyzeSemanticScope(semantic_input, semantic_provider);
+    if (!semantic_result.success)
+    {
+        std::cerr << semantic_result.error_message << "\n";
+        return 1;
+    }
+    planner_input.has_semantic_scope = true;
+    planner_input.semantic_scope = semantic_result.scope;
+
     const auto planner_result = agentguard::TryPlanTask(planner_input, planner_provider);
     if (!planner_result.success)
     {
@@ -335,19 +743,43 @@ int RunCommand(const RunOptions& options)
 
         agentguard::ReportWriteRequest report_request;
         report_request.reports_directory = workspace.reports_root;
+        report_request.source_project = source_root;
+        report_request.workspace_repo = workspace.repo_root;
+        report_request.source_modified = "false";
         report_request.task_spec = planner_result.task_spec;
         report_request.related_files = planner_result.task_spec.allowed_files;
+        report_request.diff_report = agentguard::CaptureWorkspaceDiff(workspace.repo_root);
         report_request.risk_warnings = {"Dry-run only: no patch was applied and MSBuild was not invoked."};
-        agentguard::WriteReport(report_request);
+        const auto report = agentguard::WriteReport(report_request);
 
-        std::cout << "Dry run completed\n";
-        std::cout << "Workspace: " << workspace.task_root.string() << "\n";
-        std::cout << "Report: " << dry_run_report.string() << "\n";
-        std::cout << "TaskSpec:\n" << nlohmann::json(planner_result.task_spec).dump(2) << "\n";
-        std::cout << "Related files:\n";
-        for (const auto& file : planner_result.task_spec.allowed_files)
+        if (options.json)
         {
-            std::cout << "- " << file << "\n";
+            std::cout << nlohmann::json{
+                {"ok", true},
+                {"success", true},
+                {"command", "run"},
+                {"mode", "dry_run"},
+                {"task_id", task_id},
+                {"workspace", workspace.task_root.string()},
+                {"runs_root", options.runs_root.string()},
+                {"runs_root_source", options.runs_root_source},
+                {"report", report.markdown_path.string()},
+                {"dry_run_report", dry_run_report.string()},
+                {"allowed_files", planner_result.task_spec.allowed_files},
+                {"forbidden_files", planner_result.task_spec.forbidden_files}
+            }.dump() << "\n";
+        }
+        else
+        {
+            std::cout << "Dry run completed\n";
+            std::cout << "Workspace: " << workspace.task_root.string() << "\n";
+            std::cout << "Report: " << dry_run_report.string() << "\n";
+            std::cout << "TaskSpec:\n" << nlohmann::json(planner_result.task_spec).dump(2) << "\n";
+            std::cout << "Related files:\n";
+            for (const auto& file : planner_result.task_spec.allowed_files)
+            {
+                std::cout << "- " << file << "\n";
+            }
         }
         return 0;
     }
@@ -373,19 +805,595 @@ int RunCommand(const RunOptions& options)
 
     agentguard::ReportWriteRequest report_request;
     report_request.reports_directory = workspace.reports_root;
+    report_request.source_project = source_root;
+    report_request.workspace_repo = workspace.repo_root;
+    report_request.source_modified = "false";
     report_request.task_spec = repair_result.report.task_spec;
     report_request.related_files = repair_result.report.related_files;
     report_request.build_result = repair_result.report.build_result;
     report_request.repair_rounds = repair_result.report.repair_rounds;
+    report_request.diff_report = agentguard::CaptureWorkspaceDiff(workspace.repo_root);
     report_request.risk_warnings = repair_result.success
         ? std::vector<std::string>{}
         : std::vector<std::string>{repair_result.error_message};
     const auto report = agentguard::WriteReport(report_request);
 
-    std::cout << "Run completed\n";
-    std::cout << "Workspace: " << workspace.task_root.string() << "\n";
-    std::cout << "Report: " << report.markdown_path.string() << "\n";
+    if (options.json)
+    {
+        std::cout << nlohmann::json{
+            {"ok", repair_result.success},
+            {"success", repair_result.success},
+            {"command", "run"},
+            {"task_id", task_id},
+            {"workspace", workspace.task_root.string()},
+            {"runs_root", options.runs_root.string()},
+            {"runs_root_source", options.runs_root_source},
+            {"report", report.markdown_path.string()},
+            {"repair_rounds", repair_result.report.repair_rounds},
+            {"build_success", repair_result.report.build_result.success},
+            {"error_code", repair_result.success ? "" : "BUILD_FAILED"}
+        }.dump() << "\n";
+    }
+    else
+    {
+        std::cout << "Run completed\n";
+        std::cout << "Workspace: " << workspace.task_root.string() << "\n";
+        std::cout << "Report: " << report.markdown_path.string() << "\n";
+    }
     return repair_result.success ? 0 : 1;
+}
+
+std::unique_ptr<agentguard::ILLMProvider> CreateSmokeProvider(const agentguard::LLMProviderConfig& config)
+{
+    if (config.provider == "openai")
+    {
+        return std::make_unique<agentguard::OpenAIProvider>(config);
+    }
+
+    if (config.provider == "deepseek")
+    {
+        return std::make_unique<agentguard::DeepSeekProvider>(config);
+    }
+
+    if (config.provider == "claude")
+    {
+        return std::make_unique<agentguard::ClaudeProvider>(config);
+    }
+
+    if (config.provider == "file")
+    {
+        if (config.file_response_path.empty())
+        {
+            throw std::runtime_error(
+                "AGENTGUARD_LLM_RESPONSE_FILE is required when AGENTGUARD_LLM_PROVIDER=file.");
+        }
+        return std::make_unique<agentguard::FileLLMProvider>(config.file_response_path);
+    }
+
+    if (config.provider == "fake")
+    {
+        return std::make_unique<agentguard::FakeLLMProvider>(
+            nlohmann::json{{"provider", "fake"}}.dump(),
+            nlohmann::json{{"provider", "fake"}});
+    }
+
+    throw std::runtime_error("Unsupported AGENTGUARD_LLM_PROVIDER: " + config.provider);
+}
+
+std::unique_ptr<agentguard::ILLMProvider> CreateProviderFromConfig(const agentguard::LLMProviderConfig& config)
+{
+    return CreateSmokeProvider(config);
+}
+
+agentguard::LLMProviderConfig BuildProviderConfig(
+    const std::string& provider,
+    const std::string& model,
+    const fs::path& response_file)
+{
+    auto config = agentguard::LoadLLMProviderConfigFromEnvironment();
+    config.provider = provider;
+    if (!response_file.empty())
+    {
+        config.file_response_path = response_file;
+    }
+
+    if (!model.empty())
+    {
+        if (provider == "openai")
+        {
+            config.openai_model = model;
+        }
+        else if (provider == "deepseek")
+        {
+            config.deepseek_model = model;
+        }
+        else if (provider == "claude")
+        {
+            config.claude_model = model;
+        }
+    }
+
+    return config;
+}
+
+std::unique_ptr<agentguard::ILLMProvider> CreateAnalyzeProvider(
+    const AnalyzeOptions& options,
+    const std::vector<std::string>& static_allowed_files,
+    const std::vector<std::string>& static_forbidden_files,
+    const agentguard::ImpactAnalysis& impact)
+{
+    if (options.provider == "fake")
+    {
+        const nlohmann::json response =
+            MakeFakeSemanticScopeJson(options.task, static_allowed_files, static_forbidden_files, impact);
+        return std::make_unique<agentguard::FakeLLMProvider>(response.dump(), response);
+    }
+
+    const auto config = BuildProviderConfig(options.provider, options.model, options.response_file);
+    return CreateProviderFromConfig(config);
+}
+
+std::unique_ptr<agentguard::ILLMProvider> CreateReviewProvider(const ReviewOptions& options)
+{
+    if (options.provider == "fake")
+    {
+        const auto response = MakeFakeSemanticReviewJson();
+        return std::make_unique<agentguard::FakeLLMProvider>(response.dump(), response);
+    }
+
+    const auto config = BuildProviderConfig(options.provider, options.model, options.response_file);
+    return CreateProviderFromConfig(config);
+}
+
+int RunLlmSmokeCommand(const LlmSmokeOptions& options)
+{
+    try
+    {
+        const auto config = agentguard::LoadLLMProviderConfigFromEnvironment();
+        const auto provider = CreateSmokeProvider(config);
+        const auto response = provider->GenerateText(options.input);
+        if (options.json)
+        {
+            std::cout << nlohmann::json{
+                {"ok", true},
+                {"success", true},
+                {"command", "llm-smoke"},
+                {"provider", config.provider},
+                {"response", response}
+            }.dump() << "\n";
+        }
+        else
+        {
+            std::cout << response << "\n";
+        }
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        if (options.json)
+        {
+            return EmitJsonError(
+                "llm-smoke",
+                ClassifyExceptionError(exception.what()),
+                exception.what(),
+                "Check provider, model, API key environment variables, and network access.");
+        }
+        std::cerr << exception.what() << "\n";
+        return 1;
+    }
+}
+
+int RunAnalyzeCommand(const AnalyzeOptions& options)
+{
+    try
+    {
+        if (!fs::exists(options.solution) || options.solution.extension() != ".sln")
+        {
+            if (options.json)
+            {
+                return EmitJsonError(
+                    "analyze",
+                    "SOLUTION_PARSE_FAILED",
+                    "--solution must point to an existing .sln file.",
+                    "Pass the absolute path to a Visual Studio solution file.");
+            }
+            std::cerr << "--solution must point to an existing .sln file.\n";
+            return 2;
+        }
+
+        const fs::path source_root = fs::absolute(options.solution).parent_path();
+        const std::string task_id = MakeTaskId(options.solution, options.task);
+        const auto workspace = agentguard::RunWorkspace(agentguard::WorkspaceOptions{
+            source_root,
+            options.runs_root,
+            task_id,
+            options.force
+        }).Prepare();
+
+        const fs::path workspace_solution = workspace.repo_root / options.solution.filename();
+        const auto sln_result = agentguard::ParseSln(workspace_solution);
+
+        agentguard::ProjectInfo project_info;
+        project_info.solution_name = workspace_solution.stem().string();
+        project_info.solution_path = workspace_solution.string();
+        for (const auto& sln_project : sln_result.projects)
+        {
+            auto parsed_project = agentguard::ParseVcxproj(workspace.repo_root / fs::path(sln_project.project_path));
+            parsed_project.project_guid = sln_project.project_guid;
+            parsed_project.project_type_guid = sln_project.project_type_guid;
+            project_info.projects.push_back(std::move(parsed_project));
+        }
+
+        const auto source_files = agentguard::IndexSourceFiles(workspace.repo_root);
+        std::vector<agentguard::SourceFileInfo> symbol_files;
+        symbol_files.reserve(source_files.size());
+        for (const auto& source_file : source_files)
+        {
+            symbol_files.push_back(agentguard::IndexCppSymbols(workspace.repo_root / source_file.file_path, workspace.repo_root));
+        }
+
+        const auto dependency_graph = agentguard::BuildDependencyGraph(workspace.repo_root, project_info, symbol_files);
+        const auto symbol_index = agentguard::BuildSymbolIndex(symbol_files);
+        const auto impact = agentguard::AnalyzeImpact(options.task, symbol_files, dependency_graph, symbol_index);
+        const auto candidates = agentguard::SelectRelevantFiles(options.task, symbol_files);
+        const auto allowed_files = SelectAllowedFiles(candidates, symbol_files);
+        const auto forbidden_files = BuildForbiddenFiles(symbol_files, allowed_files);
+        const auto relevant_contents = LoadRelevantFileContents(workspace.repo_root, allowed_files);
+        const auto provider = CreateAnalyzeProvider(options, allowed_files, forbidden_files, impact);
+
+        agentguard::SemanticAnalyzerInput input;
+        input.user_request = options.task;
+        input.solution_path = workspace_solution;
+        input.project_info = project_info;
+        input.source_files = symbol_files;
+        input.context_candidates = candidates;
+        input.relevant_files = relevant_contents;
+        input.static_allowed_files = allowed_files;
+        input.static_forbidden_files = forbidden_files;
+        input.impact = impact;
+
+        const auto result = agentguard::TryAnalyzeSemanticScope(input, *provider);
+
+        WriteTextFile(workspace.task_root / "semantic_analyze_prompt.txt", result.prompt);
+        if (!result.raw_response.empty())
+        {
+            WriteJsonOrRawText(workspace.task_root / "semantic_analyze_raw_response.json", result.raw_response);
+        }
+
+        if (!result.success)
+        {
+            if (options.json)
+            {
+                return EmitJsonError(
+                    "analyze",
+                    ClassifyExceptionError(result.error_message),
+                    result.error_message,
+                    "Inspect semantic_analyze_prompt.txt and semantic_analyze_raw_response.json in the workspace.");
+            }
+            std::cerr << result.error_message << "\n";
+            return 1;
+        }
+
+        WriteTextFile(
+            workspace.task_root / "semantic_scope.json",
+            nlohmann::json(result.scope).dump(2));
+
+        agentguard::TaskSpec report_spec;
+        report_spec.task_id = task_id;
+        report_spec.user_request = options.task;
+        report_spec.target_solution = workspace_solution.string();
+        report_spec.target_project = project_info.projects.empty() ? "" : project_info.projects.front().project_name;
+        for (const auto& file : result.scope.allowed_files)
+        {
+            report_spec.allowed_files.push_back(file.path);
+        }
+        for (const auto& file : result.scope.protected_files)
+        {
+            report_spec.forbidden_files.push_back(file.path);
+            report_spec.protected_files.push_back(file.path);
+        }
+        for (const auto& file : result.scope.context_files)
+        {
+            report_spec.context_files.push_back(file.path);
+        }
+        for (const auto& file : result.scope.suspected_files)
+        {
+            report_spec.suspected_files.push_back(file.path);
+        }
+        for (const auto& file : result.scope.needs_approval_files)
+        {
+            report_spec.needs_approval_files.push_back(file.path);
+        }
+        report_spec.has_semantic_scope = true;
+        report_spec.semantic_scope = result.scope;
+        report_spec.acceptance_criteria = {"Semantic scope analysis completed."};
+        report_spec.max_repair_rounds = 0;
+
+        const auto diff_report = agentguard::CaptureWorkspaceDiff(workspace.repo_root);
+        agentguard::ReportWriteRequest report_request;
+        report_request.reports_directory = workspace.reports_root;
+        report_request.source_project = source_root;
+        report_request.workspace_repo = workspace.repo_root;
+        report_request.source_modified = "false";
+        report_request.task_spec = report_spec;
+        report_request.related_files = report_spec.allowed_files;
+        report_request.diff_report = diff_report;
+        const auto report = agentguard::WriteReport(report_request);
+
+        if (options.json)
+        {
+            std::cout << nlohmann::json{
+                {"ok", true},
+                {"success", true},
+                {"command", "analyze"},
+                {"task_id", task_id},
+                {"workspace", workspace.task_root.string()},
+                {"runs_root", options.runs_root.string()},
+                {"runs_root_source", options.runs_root_source},
+                {"semantic_scope", (workspace.task_root / "semantic_scope.json").string()},
+                {"semantic_scope_path", (workspace.task_root / "semantic_scope.json").string()},
+                {"report", report.markdown_path.string()},
+                {"report_json", report.json_path.string()},
+                {"counts", {
+                    {"allowed", result.scope.allowed_files.size()},
+                    {"context", result.scope.context_files.size()},
+                    {"suspected", result.scope.suspected_files.size()},
+                    {"protected", result.scope.protected_files.size()},
+                    {"needs_approval", result.scope.needs_approval_files.size()}
+                }}
+            }.dump() << "\n";
+        }
+        else
+        {
+            std::cout << "Semantic analysis completed\n";
+            std::cout << "Workspace: " << workspace.task_root.string() << "\n";
+            std::cout << "allowed=" << result.scope.allowed_files.size()
+                      << " context=" << result.scope.context_files.size()
+                      << " suspected=" << result.scope.suspected_files.size()
+                      << " protected=" << result.scope.protected_files.size()
+                      << " needs_approval=" << result.scope.needs_approval_files.size()
+                      << "\n";
+        }
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        if (options.json)
+        {
+            return EmitJsonError(
+                "analyze",
+                ClassifyExceptionError(exception.what()),
+                exception.what(),
+                "Check solution path, provider configuration, Git availability, and workspace permissions.");
+        }
+        std::cerr << exception.what() << "\n";
+        return 1;
+    }
+}
+
+int RunReviewCommand(const ReviewOptions& options)
+{
+    try
+    {
+        const fs::path repo_root = ResolveWorkspaceRepoRoot(options.workspace);
+        const fs::path task_root = ResolveTaskRootFromWorkspace(options.workspace);
+        if (!fs::exists(repo_root) || !fs::is_directory(repo_root))
+        {
+            if (options.json)
+            {
+                return EmitJsonError(
+                    "review",
+                    "WORKSPACE_CREATE_FAILED",
+                    "--workspace must point to an existing workspace or repo directory.",
+                    "Pass runs/<task_id> or runs/<task_id>/repo.");
+            }
+            std::cerr << "--workspace must point to an existing workspace or repo directory.\n";
+            return 2;
+        }
+
+        const fs::path scope_path = task_root / "semantic_scope.json";
+        if (!fs::exists(scope_path))
+        {
+            if (options.json)
+            {
+                return EmitJsonError(
+                    "review",
+                    "SCOPE_CONFLICT",
+                    "semantic_scope.json was not found beside the workspace repo.",
+                    "Run analyze before review and pass the matching workspace.");
+            }
+            std::cerr << "semantic_scope.json was not found beside the workspace repo.\n";
+            return 2;
+        }
+
+        const auto scope = nlohmann::json::parse(ReadTextIfPresent(scope_path))
+            .get<agentguard::SemanticScopeResult>();
+        agentguard::DiffReport diff_report;
+        try
+        {
+            diff_report = agentguard::CaptureWorkspaceDiff(repo_root);
+        }
+        catch (const std::exception& exception)
+        {
+            diff_report.warnings.push_back(exception.what());
+        }
+        auto build_result = LoadLatestBuildResult(task_root);
+        build_result.parsed_errors = agentguard::ParseBuildErrors(build_result);
+
+        agentguard::SemanticReviewInput input;
+        input.user_request = options.task;
+        input.semantic_scope = scope;
+        input.diff_text = diff_report.diff_text.empty() ? diff_report.diff_stat : diff_report.diff_text;
+        input.build_result = build_result;
+        input.parsed_errors = build_result.parsed_errors;
+        input.relevant_files = LoadSemanticReviewFileContents(repo_root, scope);
+
+        const auto provider = CreateReviewProvider(options);
+        const auto result = agentguard::TryReviewSemanticChange(input, *provider);
+
+        WriteTextFile(task_root / "semantic_review_prompt.txt", result.prompt);
+        if (!result.raw_response.empty())
+        {
+            WriteJsonOrRawText(task_root / "semantic_review_raw_response.json", result.raw_response);
+        }
+
+        if (!result.success)
+        {
+            if (options.json)
+            {
+                return EmitJsonError(
+                    "review",
+                    ClassifyExceptionError(result.error_message),
+                    result.error_message,
+                    "Inspect semantic_review_prompt.txt and semantic_review_raw_response.json in the workspace.");
+            }
+            std::cerr << result.error_message << "\n";
+            return 1;
+        }
+
+        WriteTextFile(task_root / "semantic_review.json", nlohmann::json(result.review).dump(2));
+
+        if (options.json)
+        {
+            std::cout << nlohmann::json{
+                {"ok", true},
+                {"success", true},
+                {"command", "review"},
+                {"workspace", task_root.string()},
+                {"semantic_review_path", (task_root / "semantic_review.json").string()},
+                {"semantic_review", (task_root / "semantic_review.json").string()},
+                {"next_action", result.review.next_action},
+                {"requires_scope_expansion", result.review.requires_scope_expansion},
+                {"risk_count", result.review.risks.size()},
+                {"confidence", result.review.confidence},
+                {"diff", {
+                    {"git_top_level", diff_report.git_top_level.string()},
+                    {"diff_base", diff_report.diff_base},
+                    {"workspace_modified", diff_report.workspace_modified},
+                    {"warnings", diff_report.warnings}
+                }}
+            }.dump() << "\n";
+        }
+        else
+        {
+            std::cout << "Semantic review completed\n";
+            std::cout << "Workspace: " << task_root.string() << "\n";
+            std::cout << "next_action=" << result.review.next_action
+                      << " risk_count=" << result.review.risks.size()
+                      << " requires_scope_expansion="
+                      << (result.review.requires_scope_expansion ? "true" : "false")
+                      << "\n";
+        }
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        if (options.json)
+        {
+            return EmitJsonError(
+                "review",
+                ClassifyExceptionError(exception.what()),
+                exception.what(),
+                "Check semantic_scope.json, provider output, and workspace Git baseline.");
+        }
+        std::cerr << exception.what() << "\n";
+        return 1;
+    }
+}
+
+int RunVerifyCommand(const VerifyOptions& options)
+{
+    try
+    {
+        const fs::path repo_root = ResolveWorkspaceRepoRoot(options.workspace);
+        const fs::path task_root = ResolveTaskRootFromWorkspace(options.workspace);
+        if (!fs::exists(repo_root) || !fs::is_directory(repo_root))
+        {
+            if (options.json)
+            {
+                return EmitJsonError(
+                    "verify",
+                    "WORKSPACE_CREATE_FAILED",
+                    "--workspace must point to an existing workspace or repo directory.",
+                    "Pass runs/<task_id> or runs/<task_id>/repo.");
+            }
+            std::cerr << "--workspace must point to an existing workspace or repo directory.\n";
+            return 2;
+        }
+
+        const fs::path solution = FindFirstSolution(repo_root);
+        if (solution.empty())
+        {
+            if (options.json)
+            {
+                return EmitJsonError(
+                    "verify",
+                    "SOLUTION_PARSE_FAILED",
+                    "No .sln file was found under the workspace.",
+                    "Run analyze first and pass its workspace path.");
+            }
+            std::cerr << "No .sln file was found under the workspace.\n";
+            return 2;
+        }
+
+        auto build_result = agentguard::BuildSolution(
+            solution,
+            options.configuration,
+            options.platform);
+        build_result.parsed_errors = agentguard::ParseBuildErrors(build_result);
+
+        const fs::path log_path = task_root / "logs" / "verify_build.log";
+        std::string log;
+        log += "Command: " + build_result.command + "\n";
+        log += "Return code: " + std::to_string(build_result.return_code) + "\n";
+        log += "Stdout:\n" + build_result.stdout_text + "\n";
+        log += "Stderr:\n" + build_result.stderr_text + "\n";
+        WriteTextFile(log_path, log);
+
+        if (options.json)
+        {
+            const std::string error_code = build_result.return_code == -1 ? "MSBUILD_NOT_FOUND" : "BUILD_FAILED";
+            std::cout << nlohmann::json{
+                {"ok", build_result.success},
+                {"success", build_result.success},
+                {"command", "verify"},
+                {"solution", solution.string()},
+                {"return_code", build_result.return_code},
+                {"parsed_errors", build_result.parsed_errors.size()},
+                {"error_code", build_result.success ? "" : error_code},
+                {"build", {
+                    {"success", build_result.success},
+                    {"return_code", build_result.return_code},
+                    {"parsed_errors", build_result.parsed_errors.size()}
+                }},
+                {"artifacts", {
+                    {"log", log_path.string()}
+                }},
+                {"log_path", log_path.string()}
+            }.dump() << "\n";
+        }
+        else
+        {
+            std::cout << "Verification completed\n";
+            std::cout << "Solution: " << solution.string() << "\n";
+            std::cout << "Success: " << (build_result.success ? "true" : "false") << "\n";
+            std::cout << "Log: " << log_path.string() << "\n";
+        }
+        return build_result.success ? 0 : 1;
+    }
+    catch (const std::exception& exception)
+    {
+        if (options.json)
+        {
+            return EmitJsonError(
+                "verify",
+                ClassifyExceptionError(exception.what()),
+                exception.what(),
+                "Check workspace path, MSBuild installation, and project configuration.");
+        }
+        std::cerr << exception.what() << "\n";
+        return 1;
+    }
 }
 } // namespace
 
@@ -398,17 +1406,86 @@ int AppMain(int argc, char** argv)
     auto* run = app.add_subcommand("run", "Run an isolated AgentGuardVS-CXX task.");
     run->add_option("--solution", run_options.solution, "Path to the target .sln file.")->required();
     run->add_option("--task", run_options.task, "User task description.")->required();
+    run->add_option("--provider", run_options.provider, "LLM provider: fake, file, openai, deepseek, claude.")
+        ->default_val("fake");
+    run->add_option("--model", run_options.model, "Model name for network-backed providers.");
+    run->add_option("--response-file", run_options.response_file, "Response file for --provider file.");
     run->add_option("--configuration", run_options.configuration, "MSBuild configuration.")->default_val("Debug");
     run->add_option("--platform", run_options.platform, "MSBuild platform.")->default_val("x64");
-    run->add_option("--runs-root", run_options.runs_root, "Root directory for isolated runs.")->default_val("runs");
+    auto* run_runs_root =
+        run->add_option("--runs-root", run_options.runs_root, "Root directory for isolated runs.");
+    run->add_option("--max-repair-rounds", run_options.max_repair_rounds, "Maximum automated repair rounds.")
+        ->default_val(3);
     run->add_flag("--dry-run", run_options.dry_run, "Generate TaskSpec and context without applying patches.");
     run->add_flag("--no-llm", run_options.no_llm, "Use deterministic FakeLLMProvider output.");
     run->add_flag("--force", run_options.force, "Overwrite an existing task workspace.");
+    run->add_flag("--json", run_options.json, "Print a machine-readable JSON summary.");
+
+    LlmSmokeOptions smoke_options;
+    auto* llm_smoke = app.add_subcommand("llm-smoke", "Call the configured LLM provider and print raw output.");
+    llm_smoke->add_option("--input", smoke_options.input, "Input text to send to the provider.")->required();
+    llm_smoke->add_flag("--json", smoke_options.json, "Print a machine-readable JSON summary.");
+
+    AnalyzeOptions analyze_options;
+    auto* analyze = app.add_subcommand("analyze", "Analyze semantic file scope without applying patches.");
+    analyze->add_option("--solution", analyze_options.solution, "Path to the target .sln file.")->required();
+    analyze->add_option("--task", analyze_options.task, "User task description.")->required();
+    analyze->add_option("--provider", analyze_options.provider, "LLM provider: fake, file, openai, deepseek, claude.")
+        ->default_val("fake");
+    analyze->add_option("--model", analyze_options.model, "Model name for network-backed providers.");
+    analyze->add_option("--response-file", analyze_options.response_file, "Response file for --provider file.");
+    auto* analyze_runs_root =
+        analyze->add_option("--runs-root", analyze_options.runs_root, "Root directory for isolated runs.");
+    analyze->add_flag("--force", analyze_options.force, "Overwrite an existing task workspace.");
+    analyze->add_flag("--json", analyze_options.json, "Print a machine-readable JSON summary.");
+
+    VerifyOptions verify_options;
+    auto* verify = app.add_subcommand("verify", "Build a workspace with MSBuild and write a verification log.");
+    verify->add_option("--workspace", verify_options.workspace, "Workspace task root or repo directory.")->required();
+    verify->add_option("--configuration", verify_options.configuration, "MSBuild configuration.")->default_val("Debug");
+    verify->add_option("--platform", verify_options.platform, "MSBuild platform.")->default_val("x64");
+    verify->add_flag("--json", verify_options.json, "Print a machine-readable JSON summary.");
+
+    ReviewOptions review_options;
+    auto* review = app.add_subcommand("review", "Review semantic completeness after a patch or build failure.");
+    review->add_option("--workspace", review_options.workspace, "Workspace task root or repo directory.")->required();
+    review->add_option("--task", review_options.task, "User task description.")->required();
+    review->add_option("--provider", review_options.provider, "LLM provider: fake, file, openai, deepseek, claude.")
+        ->default_val("fake");
+    review->add_option("--model", review_options.model, "Model name for network-backed providers.");
+    review->add_option("--response-file", review_options.response_file, "Response file for --provider file.");
+    review->add_flag("--json", review_options.json, "Print a machine-readable JSON summary.");
 
     CLI11_PARSE(app, argc, argv);
 
+    ResolveRunsRoot(run_options.runs_root, run_options.runs_root_source, run_runs_root->count() > 0);
+    ResolveRunsRoot(
+        analyze_options.runs_root,
+        analyze_options.runs_root_source,
+        analyze_runs_root->count() > 0);
+
     try
     {
+        if (*analyze)
+        {
+            return RunAnalyzeCommand(analyze_options);
+        }
+
+        if (*verify)
+        {
+            return RunVerifyCommand(verify_options);
+        }
+
+        if (*review)
+        {
+            return RunReviewCommand(review_options);
+        }
+
+        if (*llm_smoke)
+        {
+            return RunLlmSmokeCommand(smoke_options);
+        }
+
         if (*run)
         {
             return RunCommand(run_options);

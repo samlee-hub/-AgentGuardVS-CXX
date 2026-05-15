@@ -1,9 +1,11 @@
 #include "indexing/CppSymbolIndexer.h"
 
+#include <algorithm>
 #include <fstream>
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 namespace agentguard
 {
@@ -34,6 +36,47 @@ void AppendMatches(
     {
         output.push_back((*it)[group_index].str());
     }
+}
+
+void AppendUnique(std::vector<std::string>& output, const std::string& value)
+{
+    if (value.empty())
+    {
+        return;
+    }
+    if (std::find(output.begin(), output.end(), value) == output.end())
+    {
+        output.push_back(value);
+    }
+}
+
+bool IsControlIdentifier(const std::string& value)
+{
+    static const std::unordered_set<std::string> controls{
+        "if", "for", "while", "switch", "return", "sizeof", "catch"
+    };
+    return controls.contains(value);
+}
+
+bool LooksLikeCommandString(const std::string& value)
+{
+    if (value.empty())
+    {
+        return false;
+    }
+    bool has_upper = false;
+    for (const char ch : value)
+    {
+        if (ch >= 'a' && ch <= 'z')
+        {
+            return false;
+        }
+        if (ch >= 'A' && ch <= 'Z')
+        {
+            has_upper = true;
+        }
+    }
+    return has_upper;
 }
 } // namespace
 
@@ -84,6 +127,54 @@ SourceFileInfo IndexCppSymbols(
         content,
         std::regex(R"CPP((?:^|[\r\n])\s*[A-Za-z_:<>~*&\s]+\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?\{)CPP"),
         1);
+
+    AppendMatches(
+        info.methods,
+        content,
+        std::regex(R"CPP(\b([A-Za-z_]\w*::[A-Za-z_]\w*)\s*\()CPP"),
+        1);
+    AppendMatches(
+        info.macros,
+        content,
+        std::regex(R"CPP((?:^|[\r\n])\s*#\s*define\s+([A-Za-z_]\w*))CPP"),
+        1);
+
+    const std::regex string_pattern(R"CPP("([^"\r\n]{1,128})")CPP");
+    for (auto it = std::sregex_iterator(content.begin(), content.end(), string_pattern);
+         it != std::sregex_iterator();
+         ++it)
+    {
+        const std::string value = (*it)[1].str();
+        if (LooksLikeCommandString(value))
+        {
+            AppendUnique(info.command_strings, value);
+        }
+    }
+
+    const std::regex reference_pattern(R"CPP(\b([A-Za-z_]\w*)\s*\()CPP");
+    for (auto it = std::sregex_iterator(content.begin(), content.end(), reference_pattern);
+         it != std::sregex_iterator();
+         ++it)
+    {
+        const std::string value = (*it)[1].str();
+        if (!IsControlIdentifier(value))
+        {
+            AppendUnique(info.symbol_references, value);
+        }
+    }
+
+    for (const auto& value : info.macros)
+    {
+        AppendUnique(info.keywords, value);
+    }
+    for (const auto& value : info.command_strings)
+    {
+        AppendUnique(info.keywords, value);
+    }
+    for (const auto& value : info.symbol_references)
+    {
+        AppendUnique(info.keywords, value);
+    }
 
     return info;
 }

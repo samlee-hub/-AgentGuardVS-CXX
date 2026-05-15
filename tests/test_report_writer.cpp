@@ -42,6 +42,17 @@ TEST(ReportWriterTest, WritesMarkdownAndJsonWithAuditFields)
     spec.target_project = "Server";
     spec.allowed_files = {"src/Summon.cpp"};
     spec.forbidden_files = {"src/Auth.cpp"};
+    spec.has_semantic_scope = true;
+    spec.semantic_scope.task_summary = "Add summon cooldown.";
+    spec.semantic_scope.risk_level = "medium";
+    spec.semantic_scope.recommendation = "proceed";
+    spec.semantic_scope.blast_radius = "medium";
+    spec.semantic_scope.public_interface_changes = true;
+    spec.semantic_scope.related_symbols = {"function:CanSummon@src/Summon.cpp"};
+    spec.semantic_scope.dependency_reasons = {"src/Summon.h is included by src/Summon.cpp"};
+    spec.semantic_scope.allowed_files = {
+        agentguard::SemanticFileReference{"src/Summon.cpp", "Contains summon implementation.", 0.95}
+    };
     spec.acceptance_criteria = {"Build succeeds"};
     spec.max_repair_rounds = 3;
 
@@ -58,9 +69,15 @@ TEST(ReportWriterTest, WritesMarkdownAndJsonWithAuditFields)
     diff_report.success = true;
     diff_report.diff_stat = "1 file changed, 2 insertions(+)";
     diff_report.diff_text = "diff --git a/src/Summon.cpp b/src/Summon.cpp";
+    diff_report.git_top_level = "C:/runs/task/repo";
+    diff_report.diff_base = "agentguard baseline";
+    diff_report.workspace_modified = true;
 
     ReportWriteRequest request;
     request.reports_directory = reports_dir;
+    request.source_project = "C:/source/Server";
+    request.workspace_repo = "C:/runs/task/repo";
+    request.source_modified = "false";
     request.task_spec = spec;
     request.related_files = {"src/Summon.cpp"};
     request.patch_apply_result = patch_result;
@@ -80,6 +97,10 @@ TEST(ReportWriterTest, WritesMarkdownAndJsonWithAuditFields)
     EXPECT_NE(markdown.find("src/Summon.cpp"), std::string::npos);
     EXPECT_NE(markdown.find("1 file changed, 2 insertions(+)"), std::string::npos);
     EXPECT_NE(markdown.find("Build is still failing."), std::string::npos);
+    EXPECT_NE(markdown.find("agentguard baseline"), std::string::npos);
+    EXPECT_NE(markdown.find("C:/runs/task/repo"), std::string::npos);
+    EXPECT_NE(markdown.find("Blast radius: medium"), std::string::npos);
+    EXPECT_NE(markdown.find("Public interface changes: true"), std::string::npos);
 
     {
         std::ifstream json_input(result.json_path);
@@ -89,6 +110,14 @@ TEST(ReportWriterTest, WritesMarkdownAndJsonWithAuditFields)
         EXPECT_EQ(json_value.at("build_result").at("return_code").get<int>(), 1);
         EXPECT_EQ(json_value.at("repair_rounds").get<int>(), 1);
         EXPECT_EQ(json_value.at("git_diff").at("stat").get<std::string>(), "1 file changed, 2 insertions(+)");
+        EXPECT_EQ(json_value.at("source_project").get<std::string>(), "C:/source/Server");
+        EXPECT_EQ(json_value.at("workspace_repo").get<std::string>(), "C:/runs/task/repo");
+        EXPECT_EQ(json_value.at("git_top_level").get<std::string>(), "C:/runs/task/repo");
+        EXPECT_EQ(json_value.at("diff_base").get<std::string>(), "agentguard baseline");
+        EXPECT_EQ(json_value.at("source_modified").get<std::string>(), "false");
+        EXPECT_EQ(json_value.at("workspace_modified").get<bool>(), true);
+        EXPECT_EQ(json_value.at("semantic_scope").at("blast_radius").get<std::string>(), "medium");
+        EXPECT_TRUE(json_value.at("semantic_scope").at("public_interface_changes").get<bool>());
     }
 
     fs::remove_all(reports_dir);

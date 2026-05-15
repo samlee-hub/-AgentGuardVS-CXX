@@ -6,6 +6,8 @@
 
 #include <nlohmann/json_fwd.hpp>
 
+#include "core/SemanticModels.h"
+
 namespace agentguard
 {
 enum class ErrorCategory
@@ -47,6 +49,10 @@ struct SourceFileInfo
     std::vector<std::string> structs;
     std::vector<std::string> enums;
     std::vector<std::string> functions;
+    std::vector<std::string> methods;
+    std::vector<std::string> macros;
+    std::vector<std::string> command_strings;
+    std::vector<std::string> symbol_references;
     std::vector<std::string> keywords;
 };
 
@@ -58,6 +64,12 @@ struct TaskSpec
     std::string target_project;
     std::vector<std::string> allowed_files;
     std::vector<std::string> forbidden_files;
+    std::vector<std::string> context_files;
+    std::vector<std::string> suspected_files;
+    std::vector<std::string> protected_files;
+    std::vector<std::string> needs_approval_files;
+    bool has_semantic_scope = false;
+    SemanticScopeResult semantic_scope;
     std::vector<std::string> acceptance_criteria;
     int max_repair_rounds = 0;
 };

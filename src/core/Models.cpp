@@ -80,9 +80,17 @@ void to_json(nlohmann::json& json_value, const TaskSpec& spec)
         {"target_project", spec.target_project},
         {"allowed_files", spec.allowed_files},
         {"forbidden_files", spec.forbidden_files},
+        {"context_files", spec.context_files},
+        {"suspected_files", spec.suspected_files},
+        {"protected_files", spec.protected_files},
+        {"needs_approval_files", spec.needs_approval_files},
         {"acceptance_criteria", spec.acceptance_criteria},
         {"max_repair_rounds", spec.max_repair_rounds}
     };
+    if (spec.has_semantic_scope)
+    {
+        json_value["semantic_scope"] = spec.semantic_scope;
+    }
 }
 
 void from_json(const nlohmann::json& json_value, TaskSpec& spec)
@@ -93,6 +101,19 @@ void from_json(const nlohmann::json& json_value, TaskSpec& spec)
     json_value.at("target_project").get_to(spec.target_project);
     json_value.at("allowed_files").get_to(spec.allowed_files);
     json_value.at("forbidden_files").get_to(spec.forbidden_files);
+    spec.context_files = json_value.value("context_files", std::vector<std::string>{});
+    spec.suspected_files = json_value.value("suspected_files", std::vector<std::string>{});
+    spec.protected_files = json_value.value("protected_files", std::vector<std::string>{});
+    spec.needs_approval_files = json_value.value("needs_approval_files", std::vector<std::string>{});
+    if (json_value.contains("semantic_scope"))
+    {
+        spec.semantic_scope = json_value.at("semantic_scope").get<SemanticScopeResult>();
+        spec.has_semantic_scope = true;
+    }
+    else
+    {
+        spec.has_semantic_scope = false;
+    }
     json_value.at("acceptance_criteria").get_to(spec.acceptance_criteria);
     json_value.at("max_repair_rounds").get_to(spec.max_repair_rounds);
 }

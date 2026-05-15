@@ -1,0 +1,51 @@
+name: AgentGuard Review
+description: Prototype local wrapper for running AgentGuardVS-CXX analyze/verify/review in GitHub Actions.
+
+inputs:
+  solution:
+    description: Path to the Visual Studio solution file.
+    required: true
+  task:
+    description: Natural-language task description for semantic analysis and review.
+    required: true
+  provider:
+    description: LLM provider to use. CI should use fake or file unless secrets are explicitly configured.
+    required: false
+    default: fake
+  model:
+    description: Optional model name for network-backed providers.
+    required: false
+    default: ""
+  runs-root:
+    description: Directory for AgentGuard run artifacts.
+    required: false
+    default: agentguard-runs
+  agentguard-exe:
+    description: Path to AgentGuardVS.exe. Build the project before invoking this prototype action.
+    required: false
+    default: AgentGuardVS.exe
+
+runs:
+  using: composite
+  steps:
+    - name: Analyze with AgentGuardVS-CXX
+      shell: pwsh
+      run: |
+        $args = @(
+          "analyze",
+          "--solution", "${{ inputs.solution }}",
+          "--task", "${{ inputs.task }}",
+          "--provider", "${{ inputs.provider }}",
+          "--runs-root", "${{ inputs.runs-root }}",
+          "--json"
+        )
+        if ("${{ inputs.model }}") {
+          $args += @("--model", "${{ inputs.model }}")
+        }
+        & "${{ inputs.agentguard-exe }}" @args
+
+    - name: Prototype notice
+      shell: pwsh
+      run: |
+        Write-Host "This prototype action only demonstrates local AgentGuard invocation."
+        Write-Host "A full PR review action will add workspace discovery, patch input, verify, review, and annotations."

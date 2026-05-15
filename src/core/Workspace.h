@@ -2,6 +2,8 @@
 
 #include <filesystem>
 
+#include "core/ProcessRunner.h"
+
 namespace agentguard
 {
 struct WorkspaceOptions
@@ -10,6 +12,7 @@ struct WorkspaceOptions
     std::filesystem::path runs_root;
     std::filesystem::path task_id;
     bool force = false;
+    const IProcessRunner* git_runner = nullptr;
 };
 
 struct WorkspacePaths
@@ -19,6 +22,8 @@ struct WorkspacePaths
     std::filesystem::path logs_root;
     std::filesystem::path reports_root;
     std::filesystem::path metadata_path;
+    std::filesystem::path source_project_path;
+    std::string diff_base;
 };
 
 class RunWorkspace

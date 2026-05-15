@@ -3,7 +3,14 @@
 #include <array>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <Windows.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -25,6 +32,21 @@ constexpr std::array<std::string_view, 10> kExcludedDirectories{
     "Intermediate",
     "Saved"
 };
+
+constexpr std::string_view kDiffBase = "agentguard baseline";
+
+std::wstring ResolveGitExecutable()
+{
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH];
+    const DWORD result = SearchPathW(nullptr, L"git.exe", nullptr, MAX_PATH, buffer, nullptr);
+    if (result > 0 && result < MAX_PATH)
+    {
+        return buffer;
+    }
+#endif
+    return L"git.exe";
+}
 
 bool IsExcludedDirectory(const std::filesystem::path& path)
 {
@@ -69,6 +91,82 @@ void CopyProjectTree(const std::filesystem::path& source_root, const std::filesy
                 destination_path,
                 std::filesystem::copy_options::overwrite_existing);
         }
+    }
+}
+
+ProcessResult RunGitCommand(
+    const IProcessRunner& runner,
+    const std::filesystem::path& repo_root,
+    std::vector<std::wstring> arguments)
+{
+    ProcessRequest request;
+    request.executable = ResolveGitExecutable();
+    request.arguments = std::move(arguments);
+    request.working_directory = repo_root;
+    return runner.Run(request);
+}
+
+std::string GitFailureMessage(const std::string& step, const ProcessResult& result)
+{
+    std::string message = "Git baseline failed during " + step + ".";
+    if (!result.stderr_text.empty())
+    {
+        message += " " + result.stderr_text;
+    }
+    else if (!result.stdout_text.empty())
+    {
+        message += " " + result.stdout_text;
+    }
+    else
+    {
+        message += " git returned code " + std::to_string(result.return_code) + ".";
+    }
+    return message;
+}
+
+void EnsureGitBaseline(
+    const std::filesystem::path& repo_root,
+    const IProcessRunner& runner)
+{
+    try
+    {
+        const auto init = RunGitCommand(runner, repo_root, {L"init"});
+        if (init.return_code != 0)
+        {
+            throw std::runtime_error(GitFailureMessage("git init", init));
+        }
+
+        const auto add = RunGitCommand(runner, repo_root, {L"add", L"."});
+        if (add.return_code != 0)
+        {
+            throw std::runtime_error(GitFailureMessage("git add", add));
+        }
+
+        const auto commit = RunGitCommand(
+            runner,
+            repo_root,
+            {
+                L"-c",
+                L"user.email=agentguard@example.invalid",
+                L"-c",
+                L"user.name=AgentGuardVS",
+                L"commit",
+                L"--allow-empty",
+                L"-m",
+                L"agentguard baseline"
+            });
+        if (commit.return_code != 0)
+        {
+            throw std::runtime_error(GitFailureMessage("git commit", commit));
+        }
+    }
+    catch (const std::runtime_error&)
+    {
+        throw;
+    }
+    catch (const std::exception& exception)
+    {
+        throw std::runtime_error(std::string("Git baseline failed. ") + exception.what());
     }
 }
 } // namespace
@@ -122,12 +220,17 @@ WorkspacePaths RunWorkspace::Prepare() const
     paths.logs_root = task_root / "logs";
     paths.reports_root = task_root / "reports";
     paths.metadata_path = task_root / "metadata.json";
+    paths.source_project_path = NormalizePath(options_.source_project_path);
+    paths.diff_base = std::string(kDiffBase);
 
     EnsureDirectory(paths.repo_root);
     EnsureDirectory(paths.logs_root);
     EnsureDirectory(paths.reports_root);
 
     CopyProjectTree(NormalizePath(options_.source_project_path), paths.repo_root);
+    const ProcessRunner default_runner;
+    const IProcessRunner& git_runner = options_.git_runner == nullptr ? default_runner : *options_.git_runner;
+    EnsureGitBaseline(paths.repo_root, git_runner);
 
     const nlohmann::json metadata{
         {"task_id", safe_task_id.generic_string()},
@@ -135,7 +238,8 @@ WorkspacePaths RunWorkspace::Prepare() const
         {"runs_root", runs_root.generic_string()},
         {"repo_root", NormalizePath(paths.repo_root).generic_string()},
         {"logs_root", NormalizePath(paths.logs_root).generic_string()},
-        {"reports_root", NormalizePath(paths.reports_root).generic_string()}
+        {"reports_root", NormalizePath(paths.reports_root).generic_string()},
+        {"diff_base", std::string(kDiffBase)}
     };
 
     std::ofstream metadata_file(paths.metadata_path);

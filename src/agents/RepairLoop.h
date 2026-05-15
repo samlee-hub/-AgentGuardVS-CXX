@@ -8,6 +8,7 @@
 #include "agents/BuildFixerAgent.h"
 #include "agents/ImplementerAgent.h"
 #include "agents/PlannerAgent.h"
+#include "agents/ReviewerAgent.h"
 #include "core/Models.h"
 
 namespace agentguard
@@ -25,6 +26,8 @@ struct RepairLoopInput
     const ILLMProvider* planner_provider = nullptr;
     const ILLMProvider* implementer_provider = nullptr;
     const ILLMProvider* build_fixer_provider = nullptr;
+    const ILLMProvider* semantic_review_provider = nullptr;
+    int max_scope_expansions = 1;
     RepairBuildExecutor build_executor;
 };
 

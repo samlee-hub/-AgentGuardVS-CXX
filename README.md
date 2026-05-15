@@ -1,79 +1,181 @@
 # AgentGuardVS-CXX
 
-AgentGuardVS-CXX is a C++20 reliability verification and automated repair platform for AI coding agents working on real Visual Studio C++ solutions.
+[![Windows Build](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/windows-build.yml/badge.svg)](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/windows-build.yml)
+[![Library Demo](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/library-demo.yml/badge.svg)](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/library-demo.yml)
 
-## One-Sentence Positioning
+AgentGuardVS-CXX is a control layer for AI coding agents working on Visual Studio C++ projects: it analyzes impact scope, isolates edits, runs MSBuild verification, performs LLM-assisted semantic review, and writes audit reports.
 
-AI proposes code changes; AgentGuardVS-CXX constrains, validates, audits, and repairs those changes through workspace isolation, structured patch plans, build verification, diagnostics, and reporting.
+## What Problem It Solves
 
-## Typical Use Cases
+AI coding agents can move quickly inside large C++ repositories, but Visual Studio projects often have fragile build settings, public headers, indirect include dependencies, and linked source files spread across `.sln` and `.vcxproj` files. A small request can accidentally touch protected files, miss related tests, or enter a repair loop after a build failure.
 
-- Analyze a Visual Studio C++ solution before any modification is applied.
-- Generate an auditable task specification and bounded modification scope.
-- Apply only validated patch plans inside an isolated `runs/<task_id>/repo` workspace.
-- Verify generated changes with Visual Studio-oriented build workflows.
-- Parse compiler, linker, and MSBuild failures into actionable repair context.
-- Produce reports and diff artifacts for review, experiments, and benchmarking.
+AgentGuardVS-CXX adds a controlled workflow around those agents:
 
-## MVP Scope
+- Create an isolated workspace before edits happen.
+- Ask an LLM to classify semantic impact scope.
+- Allow direct edits only in `allowed_files`.
+- Keep `context_files` read-only.
+- Require explicit user approval for `needs_approval_files`.
+- Forbid edits to `protected_files`.
+- Verify changes with MSBuild.
+- Review the final diff and build result before accepting the task.
+- Produce JSON and Markdown reports for audit and later debugging.
 
-The initial implementation focuses on:
+## What It Is Not
 
-1. Project documentation and engineering constraints.
-2. C++20 repository skeleton and test structure.
-3. Visual Studio solution and project inspection.
-4. Source indexing and task context selection.
-5. Build verification primitives, diagnostics, and report generation.
-6. Agent orchestration abstractions based on structured `TaskSpec` and `PatchPlan` data.
+AgentGuardVS-CXX is not an IDE, a replacement for Codex, Claude Code, Cursor, MSBuild, or your test framework. It does not guarantee business correctness, and it should not be treated as a fully autonomous engineer. It is a reliability and audit layer for Visual Studio C++ agent workflows.
 
-The MVP does not attempt to recreate Codex, Claude Code, Cursor, or a general-purpose coding chat interface.
+## Core Workflow
 
-## Development Environment
-
-- Windows 11
-- Visual Studio 2022-compatible project workflow
-- CMake-based project generation
-- MSBuild integration in later development steps
-- Git
-- vcpkg
-- PowerShell
-- Codex CLI or an equivalent external AI coding workflow
-
-## Core Language and Dependency Policy
-
-- The core platform is implemented in **C++20**.
-- Python is reserved for later benchmark aggregation, statistics, and result export only.
-- Early project dependencies are limited to:
-  - `nlohmann/json`
-  - `CLI11`
-  - `spdlog`
-  - `GoogleTest`
-
-## Non-Negotiable Safety Rule
-
-All real file modifications must occur only inside an isolated `runs/<task_id>/repo` workspace. The original user Visual Studio project must never be edited directly by the platform.
-
-## Benchmark Scope
-
-`benchmarks/tasks.jsonl` defines a vertical Agent task set for Visual Studio C++ server projects. It is not a general SWE-bench replacement; it focuses on `.sln` / `.vcxproj` projects, MSBuild validation, C++ compile and link failures, workspace isolation, and reportable repair loops.
-
-Python scripts under `scripts/` are auxiliary benchmark tools only. They may read `report.json` and `metrics.json` files from `runs/` to produce summaries, but they must not participate in the core C++ execution, patch application, build validation, or repair loop.
-
-## CLI Usage
-
-Dry-run analysis without calling a real LLM or MSBuild:
-
-```powershell
-AgentGuardVS.exe run `
-  --solution "C:\path\to\Server.sln" `
-  --task "Add summon resource cost and a global 3 second cooldown." `
-  --configuration Debug `
-  --platform x64 `
-  --runs-root runs `
-  --dry-run `
-  --no-llm
+```text
+user task
+  -> analyze
+  -> semantic_scope.json
+  -> edit allowed_files in isolated workspace
+  -> verify with MSBuild
+  -> review semantic completeness
+  -> report.md / report.json
 ```
 
-In `--dry-run` mode the platform creates `runs/<task_id>/repo`, parses the solution and project files, indexes C++ source files, selects relevant context, writes a `TaskSpec`, and emits reports without applying any patch or invoking MSBuild.
+Review can return `accept`, `repair`, `expand_scope`, `ask_user`, or `stop`. `ask_user` and `stop` are hard stops for the agent.
 
-Non-dry-run mode enters the repair loop. At this stage `--no-llm` uses deterministic fake providers, so real implementation patches should still be supplied through later provider work rather than direct file writes.
+## Main Features
+
+- Visual Studio `.sln` and `.vcxproj` inspection.
+- Isolated `runs/<task_id>/repo` workspaces.
+- Independent Git baseline inside every workspace.
+- LLM-assisted semantic scope analysis and semantic review.
+- Five-level file scope model: `allowed`, `context`, `suspected`, `needs_approval`, `protected`.
+- MSBuild verification with build logs.
+- Stable `--json` CLI summaries for agent integration.
+- Auditable Markdown and JSON reports.
+- Repository-level Codex Skill and wrapper scripts.
+- Offline demo path using the built-in file provider.
+
+## Quick Start
+
+Requirements: Windows, Visual Studio 2022 or Build Tools with C++ workload, Git, PowerShell, and CMake if you build from source.
+
+```powershell
+git clone https://github.com/<owner>/AgentGuardVS-CXX.git
+cd AgentGuardVS-CXX
+
+cmake -S . -B build\vs2022-debug -G "Visual Studio 17 2022" -A x64
+cmake --build build\vs2022-debug --config Debug
+
+$env:AGENTGUARD_EXE = (Resolve-Path ".\build\vs2022-debug\Debug\AgentGuardVS.exe").Path
+.\examples\run-library-demo.ps1
+```
+
+The demo builds the original sample project, runs its self-test, creates an isolated AgentGuard workspace, applies a deterministic example edit inside that workspace, verifies with MSBuild, and runs an offline semantic review.
+
+## Installation Requirements
+
+- Windows 11 or a supported Windows development machine.
+- Visual Studio 2022 or Visual Studio Build Tools 2022 with C++ build tools.
+- MSBuild available from Visual Studio or Build Tools.
+- Git available on `PATH`.
+- PowerShell 5.1 or newer.
+- CMake 3.21+ when building from source.
+
+See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup and environment variables.
+
+## Build
+
+```powershell
+cmake -S . -B build\vs2022-debug -G "Visual Studio 17 2022" -A x64
+cmake --build build\vs2022-debug --config Debug
+ctest --test-dir build\vs2022-debug -C Debug --output-on-failure
+```
+
+## Configure An API Provider
+
+Unit tests and the included demo do not require a network LLM. Real provider calls are intended for manual smoke tests and actual agent workflows.
+
+```powershell
+$env:AGENTGUARD_LLM_PROVIDER = "openai"   # or deepseek / claude
+$env:AGENTGUARD_OPENAI_MODEL = "<model>"
+$env:OPENAI_API_KEY = "<api-key>"
+```
+
+Provider-specific variables:
+
+- OpenAI: `OPENAI_API_KEY`, `AGENTGUARD_OPENAI_MODEL`
+- DeepSeek: `DEEPSEEK_API_KEY`, `AGENTGUARD_DEEPSEEK_MODEL`
+- Claude: `ANTHROPIC_API_KEY`, `AGENTGUARD_CLAUDE_MODEL`
+
+Do not write API keys into the repository, Skill files, reports, or logs.
+
+## Install The Codex Skill
+
+The repository includes a distributable Skill at `skills/agentguard-vs-cxx`.
+
+```powershell
+.\scripts\install-skill.ps1 -AgentGuardExe $env:AGENTGUARD_EXE -Force
+```
+
+After installation, a new Codex session can use `/skills` to discover `agentguard-vs-cxx`. The Skill tells Codex to call the wrapper scripts first, then fall back to raw CLI commands only when needed.
+
+## Run The Library-System Demo
+
+```powershell
+.\examples\run-library-demo.ps1
+```
+
+The source demo lives in `examples/library-system`. The script does not modify that original project. The edit and verification happen under an isolated workspace in `runs/library-demo`.
+
+The demo is intentionally small. It validates the AgentGuard workflow and Skill integration path; it is not evidence that every enterprise C++ project is fully covered.
+
+## Report Example
+
+Reports are written under the task workspace:
+
+```text
+runs/<task_id>/
+  repo/
+  logs/verify_build.log
+  reports/report.md
+  reports/report.json
+  semantic_scope.json
+  semantic_review.json
+```
+
+`report.json` records source project, workspace repo, Git top-level, diff base, scope lists, build result, review result, and risk notes.
+
+## Safety Boundaries
+
+- The platform does not edit the original target project.
+- Workspace repos get their own Git baseline.
+- `protected_files` are never valid edit targets.
+- `needs_approval_files` require a user decision before modification.
+- API keys must remain in environment variables or secret stores.
+- LLM semantic judgment can be wrong; human review remains necessary.
+
+See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for details.
+
+## Current Limitations
+
+- The primary target is Visual Studio C++ and MSBuild.
+- LLM-assisted semantic judgment may be incomplete or wrong.
+- Build success does not prove business logic is correct.
+- Current validation is centered on small Visual Studio C++ projects and controlled examples.
+- Enterprise-scale repositories still require human review, policy tuning, and project-specific tests.
+- The symbol and dependency analysis is lightweight; it is not a complete C++ compiler or clang-based AST.
+
+## License
+
+AgentGuardVS-CXX is released under the MIT License. MIT is intentionally permissive for this kind of developer tooling: it allows individuals, teams, and companies to adopt or adapt the project while keeping the copyright notice and warranty disclaimer.
+
+## Roadmap
+
+- P0: Independent Git baseline and diff isolation.
+- P1: Distributable Codex Skill and installer.
+- P2: Lightweight symbol-level and dependency-level impact analysis.
+- P3: GitHub Action prototype.
+- P4: Broader language and IDE integration after the Visual Studio C++ path is stable.
+
+See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## GitHub Actions
+
+Initial Windows build and library demo workflows are included under `.github/workflows`. See [docs/GITHUB_ACTION.md](docs/GITHUB_ACTION.md) for the current CI shape and the prototype `agentguard-review` action.

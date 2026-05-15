@@ -1,0 +1,35 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    env:
+      AGENTGUARD_LLM_PROVIDER: fake
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install vcpkg dependencies
+        shell: pwsh
+        run: vcpkg install --triplet x64-windows
+
+      - name: Configure CMake
+        shell: pwsh
+        run: >
+          cmake -S . -B build\vs2022-debug
+          -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build\vs2022-debug --config Debug
+
+      - name: Run unit tests
+        run: ctest --test-dir build\vs2022-debug -C Debug --output-on-failure

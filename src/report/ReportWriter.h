@@ -12,6 +12,9 @@ namespace agentguard
 struct ReportWriteRequest
 {
     std::filesystem::path reports_directory;
+    std::filesystem::path source_project;
+    std::filesystem::path workspace_repo;
+    std::string source_modified = "unknown";
     TaskSpec task_spec;
     std::vector<std::string> related_files;
     PatchApplyResult patch_apply_result;

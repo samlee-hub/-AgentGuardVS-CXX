@@ -79,6 +79,19 @@ target_link_libraries(test_cpp_symbol_indexer
 
 gtest_discover_tests(test_cpp_symbol_indexer)
 
+add_executable(test_dependency_graph
+    test_dependency_graph.cpp
+)
+
+target_link_libraries(test_dependency_graph
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_dependency_graph)
+
 add_executable(test_context_selector
     test_context_selector.cpp
 )
@@ -157,6 +170,19 @@ target_link_libraries(test_patch_applier
 
 gtest_discover_tests(test_patch_applier)
 
+add_executable(test_diff_reporter
+    test_diff_reporter.cpp
+)
+
+target_link_libraries(test_diff_reporter
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_diff_reporter)
+
 add_executable(test_report_writer
     test_report_writer.cpp
 )
@@ -182,6 +208,45 @@ target_link_libraries(test_llm_provider
 )
 
 gtest_discover_tests(test_llm_provider)
+
+add_executable(test_semantic_models
+    test_semantic_models.cpp
+)
+
+target_link_libraries(test_semantic_models
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_semantic_models)
+
+add_executable(test_semantic_analyzer_agent
+    test_semantic_analyzer_agent.cpp
+)
+
+target_link_libraries(test_semantic_analyzer_agent
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_semantic_analyzer_agent)
+
+add_executable(test_semantic_review_agent
+    test_semantic_review_agent.cpp
+)
+
+target_link_libraries(test_semantic_review_agent
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_semantic_review_agent)
 
 add_executable(test_planner_agent
     test_planner_agent.cpp
@@ -253,6 +318,68 @@ target_link_libraries(test_cli_run
 )
 
 gtest_discover_tests(test_cli_run)
+
+add_executable(test_cli_analyze
+    test_cli_analyze.cpp
+)
+
+target_compile_definitions(test_cli_analyze
+    PRIVATE
+        AGENTGUARD_EXE="$<TARGET_FILE:AgentGuardVS>"
+        MINI_VS_PROJECT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mini_vs_project"
+)
+
+target_link_libraries(test_cli_analyze
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+add_dependencies(test_cli_analyze AgentGuardVS)
+
+gtest_discover_tests(test_cli_analyze)
+
+add_executable(test_cli_review
+    test_cli_review.cpp
+)
+
+target_compile_definitions(test_cli_review
+    PRIVATE
+        AGENTGUARD_EXE="$<TARGET_FILE:AgentGuardVS>"
+)
+
+target_link_libraries(test_cli_review
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+add_dependencies(test_cli_review AgentGuardVS)
+
+gtest_discover_tests(test_cli_review)
+
+add_executable(test_cli_agent_commands
+    test_cli_agent_commands.cpp
+)
+
+target_compile_definitions(test_cli_agent_commands
+    PRIVATE
+        AGENTGUARD_EXE="$<TARGET_FILE:AgentGuardVS>"
+        MINI_VS_PROJECT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mini_vs_project"
+)
+
+target_link_libraries(test_cli_agent_commands
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+add_dependencies(test_cli_agent_commands AgentGuardVS)
+
+gtest_discover_tests(test_cli_agent_commands)
 
 add_executable(test_evaluation
     test_evaluation.cpp

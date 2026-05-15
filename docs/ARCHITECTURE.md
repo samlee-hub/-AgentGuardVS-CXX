@@ -1,110 +1,82 @@
 # Architecture
 
-## System View
+AgentGuardVS-CXX is organized as a local command-line control layer around external AI coding agents. The core platform is C++20; PowerShell scripts are used for installation and demo orchestration.
 
-AgentGuardVS-CXX is organized as a reliability pipeline:
+## CLI Layer
 
-1. Inspect the target Visual Studio solution.
-2. Build a task-aware project summary.
-3. Ask an external agent for structured guidance.
-4. Validate and apply only approved patch operations.
-5. Build, diagnose, report, and optionally repair through bounded iterations.
+`AgentGuardVS.exe` exposes agent-friendly commands:
 
-All file changes must remain inside `runs/<task_id>/repo`.
+- `analyze`: create an isolated workspace and produce `semantic_scope.json`.
+- `verify`: run MSBuild in the isolated workspace and write build logs.
+- `review`: review the workspace diff and build result after edits.
+- `run`: execute the older end-to-end repair-loop path.
+- `llm-smoke`: manually test provider connectivity.
 
-## Module Boundaries
+Commands intended for Skill automation support `--json`, returning a compact machine-readable summary while detailed artifacts are written into the run directory.
 
-### `core`
+## Workspace Layer
 
-Shared data models, task metadata, path helpers, workspace management, and process execution utilities.
+The workspace layer copies the source project into `runs/<task_id>/repo` without copying the source `.git` directory. It then initializes an independent Git repository inside the workspace:
 
-### `vs`
+```text
+git init
+git add .
+git commit -m "agentguard baseline"
+```
 
-Visual Studio specific parsing and build-related components:
+Diff reporting validates that Git top-level equals the workspace repo path before reading diffs. This prevents accidental use of a parent repository.
 
-- `.sln` inspection
-- `.vcxproj` inspection
-- MSBuild discovery
-- MSBuild invocation wrappers
+## SemanticAnalyzerAgent
 
-### `indexing`
+`SemanticAnalyzerAgent` builds an LLM prompt from the task, solution/project metadata, indexed files, and static candidate lists. It expects structured JSON and writes:
 
-Codebase scanning and lightweight context extraction:
+- `semantic_scope.json`
+- `semantic_analyze_prompt.txt`
+- `semantic_analyze_raw_response.json`
 
-- Source file enumeration
-- C++ symbol hints
-- Task-relevant file selection
+The output classifies files as `allowed`, `context`, `suspected`, `needs_approval`, or `protected`.
 
-### `diagnostics`
+## SemanticReviewAgent
 
-Failure interpretation and risk classification:
+`SemanticReviewAgent` reviews the post-edit diff and build status. It writes:
 
-- Compiler, linker, and MSBuild log parsing
-- Error category mapping
-- Risk analysis for the current task or patch outcome
+- `semantic_review.json`
+- `semantic_review_prompt.txt`
+- `semantic_review_raw_response.json`
 
-### `patching`
+The review action can be `accept`, `repair`, `expand_scope`, `ask_user`, or `stop`.
 
-Controlled code modification infrastructure:
+## MSBuildVerifier
 
-- Structured `PatchPlan`
-- Safe `PatchApplier`
-- Git diff extraction and patch reporting
+`MSBuildVerifier` locates the solution inside the workspace and invokes MSBuild with the requested configuration and platform. It writes `logs/verify_build.log` and returns a compact build summary for CLI JSON output and reports.
 
-### `llm`
+## ErrorParser And ErrorClassifier
 
-Provider abstraction for external AI output:
+Build output is parsed into structured diagnostics so agents can reason about compiler, linker, and MSBuild failures. Error classification is intentionally conservative; it supports repair context but does not replace compiler output.
 
-- Interfaces for text or JSON generation
-- Fake and file-based providers for deterministic workflows
-- Optional later network-backed providers
+## ReportWriter
 
-The provider may propose changes, but it may not write files directly.
+`ReportWriter` emits `reports/report.md` and `reports/report.json`. Reports include:
 
-### `agents`
+- source project path
+- workspace repo path
+- Git top-level
+- diff base
+- source/workspace modification status
+- semantic scope
+- build result
+- review result
+- risks and follow-up notes
 
-Workflow coordinators that turn platform context into agent interactions:
+## Skill Integration Layer
 
-- Planning
-- Implementation plan generation
-- Build-fix follow-up
-- Review-oriented checks
+`skills/agentguard-vs-cxx` contains a distributable Codex Skill. It tells Codex when to use AgentGuardVS-CXX, which wrapper scripts to call, and which safety rules are mandatory.
 
-### `report`
+The wrapper scripts prefer stable JSON commands:
 
-Human- and machine-readable output generation:
+- `run-analyze.ps1`
+- `run-verify.ps1`
+- `run-review.ps1`
+- `run-full-cycle.ps1`
 
-- Markdown reports
-- JSON reports
-- Build summaries
-- Risk and audit details
-
-### `evaluation`
-
-Benchmark-oriented data structures and metrics helpers for vertical Visual Studio C++ reliability evaluation.
-
-This is not a general SWE-bench clone. The benchmark scope is intentionally narrower: tasks are designed around Visual Studio C++ server projects, `.sln` / `.vcxproj` workflows, MSBuild validation, C++ compiler and linker diagnostics, isolated workspace repair loops, and audit-friendly reports. The goal is to measure whether an agent-control layer can safely plan, constrain, validate, and report changes in this specific engineering environment.
-
-Initial benchmark tasks live in `benchmarks/tasks.jsonl`. Each task records the expected files, forbidden files, acceptance criteria, difficulty, and tags needed for later batch evaluation.
-
-## Planned Runtime Flow
-
-1. User provides a solution path and task request.
-2. Workspace isolation copies the project into `runs/<task_id>/repo`.
-3. Visual Studio parsers extract solution and project information.
-4. Indexers summarize available code context.
-5. A planner produces `TaskSpec`.
-6. An implementer produces `PatchPlan`.
-7. `PatchApplier` validates and applies changes in the isolated workspace.
-8. Build execution and diagnostics classify any failures.
-9. Repair agents may propose additional bounded `PatchPlan` rounds.
-10. Reports and diff artifacts are emitted for audit.
-
-## Design Principle
-
-The architecture separates proposal from execution:
-
-- Agent components propose.
-- Platform components validate.
-- PatchApplier mutates files.
-- Diagnostics and reports make outcomes inspectable.
+The Skill is a workflow control layer. It does not replace developer review.

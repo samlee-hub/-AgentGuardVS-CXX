@@ -1,13 +1,17 @@
 #include "agents/RepairLoop.h"
 
+#include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <unordered_set>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
 #include "core/PathUtils.h"
 #include "diagnostics/ErrorParser.h"
 #include "patching/PatchApplier.h"
+#include "report/ReportWriter.h"
 
 namespace agentguard
 {
@@ -59,6 +63,87 @@ void SaveBuildLog(
     WriteTextFile(logs_directory / ("build_round_" + std::to_string(round_index) + ".log"), log);
 }
 
+void SaveSemanticReview(
+    const SemanticReviewResult& review,
+    const std::filesystem::path& reports_directory,
+    int round_index)
+{
+    const nlohmann::json json_value = review;
+    WriteTextFile(
+        reports_directory / ("semantic_review_round_" + std::to_string(round_index) + ".json"),
+        json_value.dump(2));
+}
+
+bool ContainsPath(const std::vector<std::string>& paths, const std::string& path)
+{
+    return std::find(paths.begin(), paths.end(), path) != paths.end();
+}
+
+void AddUnique(std::vector<std::string>& paths, const std::string& path)
+{
+    if (!ContainsPath(paths, path))
+    {
+        paths.push_back(path);
+    }
+}
+
+std::unordered_set<std::string> PathSet(const std::vector<std::string>& paths)
+{
+    return std::unordered_set<std::string>(paths.begin(), paths.end());
+}
+
+std::vector<std::string> ExpandableReviewPaths(
+    const TaskSpec& task_spec,
+    const SemanticReviewResult& review)
+{
+    const auto forbidden = PathSet(task_spec.forbidden_files);
+    const auto protected_paths = PathSet(task_spec.protected_files);
+    const auto needs_approval = PathSet(task_spec.needs_approval_files);
+    std::vector<std::string> paths;
+
+    for (const auto& suggestion : review.suggested_scope_additions)
+    {
+        const auto path = SafeRelativePath(std::filesystem::path(suggestion.path)).generic_string();
+        if (forbidden.contains(path) || protected_paths.contains(path) || needs_approval.contains(path))
+        {
+            continue;
+        }
+        AddUnique(paths, path);
+    }
+
+    if (paths.empty())
+    {
+        for (const auto& path_text : task_spec.suspected_files)
+        {
+            const auto path = SafeRelativePath(std::filesystem::path(path_text)).generic_string();
+            if (forbidden.contains(path) || protected_paths.contains(path) || needs_approval.contains(path))
+            {
+                continue;
+            }
+            AddUnique(paths, path);
+        }
+    }
+
+    return paths;
+}
+
+void SaveScopeChange(
+    const std::filesystem::path& reports_directory,
+    int round_index,
+    const std::vector<std::string>& added_files,
+    const SemanticReviewResult& review)
+{
+    const nlohmann::json json_value{
+        {"round", round_index},
+        {"added_files", added_files},
+        {"reason", "semantic_review_expand_scope"},
+        {"review", review}
+    };
+    WriteTextFile(
+        reports_directory / ("scope_change_round_" + std::to_string(round_index) + ".json"),
+        json_value.dump(2));
+}
+
 std::vector<RelevantFileContent> RefreshRelevantFiles(
     const std::filesystem::path& repo_root,
     const std::vector<RelevantFileContent>& known_files)
@@ -85,6 +170,25 @@ std::vector<std::string> RelatedFilePaths(const std::vector<RelevantFileContent>
         paths.push_back(file.relative_path);
     }
     return paths;
+}
+
+void WriteScopeExpansionReport(
+    const RepairLoopInput& input,
+    const TaskSpec& task_spec,
+    const BuildResult& build_result,
+    int repair_rounds,
+    const std::vector<std::string>& added_files)
+{
+    ReportWriteRequest report_request;
+    report_request.reports_directory = input.reports_directory;
+    report_request.task_spec = task_spec;
+    report_request.related_files = RelatedFilePaths(input.initial_relevant_files);
+    report_request.build_result = build_result;
+    report_request.repair_rounds = repair_rounds;
+    report_request.risk_warnings = {
+        "Semantic review expanded allowed_files: " + nlohmann::json(added_files).dump()
+    };
+    WriteReport(report_request);
 }
 
 RepairLoopResult Fail(const TaskSpec& spec, std::string message)
@@ -125,7 +229,7 @@ RepairLoopResult RunRepairLoop(const RepairLoopInput& input)
         return Fail(TaskSpec{}, planner_result.error_message);
     }
 
-    const TaskSpec task_spec = planner_result.task_spec;
+    TaskSpec task_spec = planner_result.task_spec;
 
     ImplementerInput implementer_input;
     implementer_input.task_spec = task_spec;
@@ -142,6 +246,7 @@ RepairLoopResult RunRepairLoop(const RepairLoopInput& input)
     PatchPlan current_patch_plan = implementer_result.patch_plan;
     BuildResult last_build_result;
     int completed_repair_rounds = 0;
+    int completed_scope_expansions = 0;
 
     for (int round_index = 0; round_index <= task_spec.max_repair_rounds; ++round_index)
     {
@@ -178,6 +283,64 @@ RepairLoopResult RunRepairLoop(const RepairLoopInput& input)
         if (round_index >= task_spec.max_repair_rounds)
         {
             break;
+        }
+
+        if (input.semantic_review_provider != nullptr)
+        {
+            SemanticReviewInput review_input;
+            review_input.user_request = task_spec.user_request;
+            review_input.semantic_scope = task_spec.semantic_scope;
+            review_input.diff_text = input.git_diff_summary;
+            review_input.build_result = last_build_result;
+            review_input.parsed_errors = last_build_result.parsed_errors;
+            review_input.relevant_files = RefreshRelevantFiles(input.repo_root, input.initial_relevant_files);
+
+            const auto review_result =
+                TryReviewSemanticChange(review_input, *input.semantic_review_provider);
+            if (!review_result.success)
+            {
+                return Fail(task_spec, review_result.error_message);
+            }
+            SaveSemanticReview(review_result.review, input.reports_directory, round_index);
+
+            if (review_result.review.next_action == "accept")
+            {
+                return Fail(task_spec, "Semantic review accepted changes despite a failed build.");
+            }
+            if (review_result.review.next_action == "ask_user")
+            {
+                return Fail(task_spec, "Semantic review requires user approval before continuing.");
+            }
+            if (review_result.review.next_action == "stop")
+            {
+                return Fail(task_spec, "Semantic review stopped repair due to risk.");
+            }
+            if (review_result.review.next_action == "expand_scope")
+            {
+                if (completed_scope_expansions >= input.max_scope_expansions)
+                {
+                    return Fail(task_spec, "Semantic review requested expand_scope after max_scope_expansions was exhausted.");
+                }
+
+                const auto added_files = ExpandableReviewPaths(task_spec, review_result.review);
+                if (added_files.empty())
+                {
+                    return Fail(task_spec, "Semantic review requested expand_scope but no safe files were available.");
+                }
+
+                for (const auto& path : added_files)
+                {
+                    AddUnique(task_spec.allowed_files, path);
+                }
+                SaveScopeChange(input.reports_directory, round_index, added_files, review_result.review);
+                WriteScopeExpansionReport(
+                    input,
+                    task_spec,
+                    last_build_result,
+                    completed_repair_rounds,
+                    added_files);
+                ++completed_scope_expansions;
+            }
         }
 
         BuildFixerInput fixer_input;
