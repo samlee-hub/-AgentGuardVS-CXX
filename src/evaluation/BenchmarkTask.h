@@ -11,10 +11,14 @@ struct BenchmarkTask
 {
     std::string task_id;
     std::string title;
+    std::string solution;
+    std::string task_file;
     std::string description;
     std::vector<std::string> expected_files;
     std::vector<std::string> forbidden_files;
+    std::vector<std::string> protected_files;
     std::vector<std::string> acceptance_criteria;
+    std::string validation_command;
     std::string difficulty;
     std::vector<std::string> tags;
 };

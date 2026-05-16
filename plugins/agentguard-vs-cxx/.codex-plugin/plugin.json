@@ -1,0 +1,30 @@
+{
+  "name": "agentguard-vs-cxx",
+  "version": "0.1.0",
+  "description": "AgentGuardVS-CXX workflow controls for Visual Studio C++ AI coding tasks.",
+  "author": "AgentGuardVS-CXX contributors",
+  "repository": "https://github.com/samlee-hub/-AgentGuardVS-CXX",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "visual-studio",
+    "cpp",
+    "msbuild",
+    "agent-safety",
+    "audit"
+  ],
+  "skills": "./skills/",
+  "assets": "./assets/",
+  "interface": {
+    "displayName": "AgentGuardVS-CXX",
+    "shortDescription": "Guardrails and audit workflow for Visual Studio C++ agent edits.",
+    "longDescription": "Runs AgentGuardVS-CXX analyze, verify, and review wrappers so Codex can scope Visual Studio C++ changes, restrict edits to allowed files, run MSBuild verification, and report audit artifacts.",
+    "capabilities": [
+      "Semantic scope analysis for Visual Studio C++ solutions",
+      "Allowed/protected file workflow enforcement",
+      "MSBuild verification wrapper",
+      "Semantic review wrapper",
+      "Report and artifact path reporting"
+    ]
+  }
+}

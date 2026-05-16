@@ -50,6 +50,7 @@ struct SourceFileInfo
     std::vector<std::string> enums;
     std::vector<std::string> functions;
     std::vector<std::string> methods;
+    std::vector<std::string> member_variables;
     std::vector<std::string> macros;
     std::vector<std::string> command_strings;
     std::vector<std::string> symbol_references;

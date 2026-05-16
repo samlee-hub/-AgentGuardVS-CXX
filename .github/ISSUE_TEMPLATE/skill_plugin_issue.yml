@@ -1,0 +1,31 @@
+name: Skill Or Plugin Issue
+description: Report Codex Skill/Plugin installation or invocation problems.
+title: "[Skill/Plugin]: "
+labels: ["skill-plugin"]
+body:
+  - type: textarea
+    id: install_path
+    attributes:
+      label: Installation Path
+      description: Describe whether you installed from GitHub clone, local plugin root, or raw Skill copy.
+    validations:
+      required: true
+  - type: textarea
+    id: invocation
+    attributes:
+      label: Invocation
+      description: What did you run or ask Codex to do?
+      placeholder: "@AgentGuardVS-CXX ..."
+    validations:
+      required: true
+  - type: textarea
+    id: failure
+    attributes:
+      label: Failure
+      description: Include redacted JSON output from wrapper scripts if available.
+      render: text
+  - type: textarea
+    id: checks
+    attributes:
+      label: Checks
+      description: Confirm AGENTGUARD_EXE is set and scripts/find-agentguard.ps1 works.

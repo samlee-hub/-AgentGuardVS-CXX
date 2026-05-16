@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <thread>
 
+#include "security/SecurityPolicy.h"
+
 namespace agentguard
 {
 namespace
@@ -58,6 +60,17 @@ std::string ReadPipe(HANDLE read_handle)
 
     return output;
 }
+
+std::string NarrowAscii(const std::wstring& value)
+{
+    std::string output;
+    output.reserve(value.size());
+    for (const auto ch : value)
+    {
+        output.push_back(ch <= 0x7F ? static_cast<char>(ch) : '?');
+    }
+    return output;
+}
 } // namespace
 
 ProcessResult ProcessRunner::Run(const ProcessRequest& request) const
@@ -99,6 +112,11 @@ ProcessResult ProcessRunner::Run(const ProcessRequest& request) const
         : request.working_directory.wstring();
 
     const auto started = std::chrono::steady_clock::now();
+    if (IsDangerousCommand(DefaultSecurityPolicy(), NarrowAscii(command_line)))
+    {
+        throw std::runtime_error("SecurityPolicy rejected a dangerous command.");
+    }
+
     const BOOL created = CreateProcessW(
         request.executable.c_str(),
         command_line.data(),

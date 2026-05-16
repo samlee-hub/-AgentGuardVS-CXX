@@ -37,6 +37,22 @@ void AddEntries(
         AddUnique(index.files_by_symbol[name], normalized_path);
     }
 }
+
+void AddMethodOwners(SymbolIndex& index, const SourceFileInfo& file)
+{
+    const std::string normalized_path = NormalizePath(file.file_path);
+    for (const auto& method : file.methods)
+    {
+        const auto separator = method.find("::");
+        if (separator == std::string::npos || separator == 0)
+        {
+            continue;
+        }
+        const std::string owner = method.substr(0, separator);
+        index.entries.push_back(SymbolIndexEntry{owner, "method_owner", normalized_path});
+        AddUnique(index.files_by_symbol[owner], normalized_path);
+    }
+}
 } // namespace
 
 SymbolIndex BuildSymbolIndex(const std::vector<SourceFileInfo>& files)
@@ -49,6 +65,8 @@ SymbolIndex BuildSymbolIndex(const std::vector<SourceFileInfo>& files)
         AddEntries(index, file, "enum", file.enums);
         AddEntries(index, file, "function", file.functions);
         AddEntries(index, file, "method", file.methods);
+        AddMethodOwners(index, file);
+        AddEntries(index, file, "member", file.member_variables);
         AddEntries(index, file, "macro", file.macros);
         AddEntries(index, file, "command_string", file.command_strings);
         AddEntries(index, file, "reference", file.symbol_references);

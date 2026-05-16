@@ -18,7 +18,9 @@ The demo is intentionally small. It verifies the AgentGuardVS-CXX workflow on a 
 Run the full demo from the repository root:
 
 ```powershell
-.\examples\run-library-demo.ps1
+.\examples\run-library-demo.ps1 -Provider fake
 ```
 
 The script builds this original project, runs the original self-test, creates an isolated workspace through AgentGuardVS-CXX, applies a sample change only inside that workspace, runs MSBuild verification, runs semantic review, and prints report paths.
+
+Use `-Provider file` to replay checked-in sample provider responses instead of the deterministic fake provider.

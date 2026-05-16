@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
+#include <map>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "core/Models.h"
@@ -9,6 +13,23 @@
 
 namespace agentguard
 {
+struct ReportMetrics
+{
+    std::int64_t analyze_duration_ms = 0;
+    std::int64_t verify_duration_ms = 0;
+    std::int64_t review_duration_ms = 0;
+    std::size_t modified_file_count = 0;
+    std::size_t allowed_file_count = 0;
+    std::size_t suspected_file_count = 0;
+    std::size_t protected_file_count = 0;
+    std::size_t build_error_count = 0;
+    int repair_rounds = 0;
+    int scope_expansions = 0;
+    std::string provider;
+    std::string model;
+    bool cache_hit = false;
+};
+
 struct ReportWriteRequest
 {
     std::filesystem::path reports_directory;
@@ -22,6 +43,10 @@ struct ReportWriteRequest
     int repair_rounds = 0;
     DiffReport diff_report;
     std::vector<std::string> risk_warnings;
+    std::optional<SemanticReviewResult> semantic_review;
+    std::string review_next_action;
+    ReportMetrics metrics;
+    std::map<std::string, std::string> artifacts;
 };
 
 struct ReportWriteResult

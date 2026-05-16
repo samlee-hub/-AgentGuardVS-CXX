@@ -4,9 +4,13 @@
 #include <Windows.h>
 #include <winhttp.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace agentguard
@@ -58,11 +62,16 @@ std::wstring ToWideAscii(const std::string& value)
     return std::wstring(value.begin(), value.end());
 }
 
-std::string LastErrorMessage(const std::string& operation)
+std::string FormatWinHttpErrorMessage(const std::string& operation, const unsigned long error_code)
 {
     std::ostringstream message;
-    message << operation << " failed with Windows error " << GetLastError() << ".";
+    message << operation << " failed with Windows error " << error_code << ".";
     return message.str();
+}
+
+[[noreturn]] void ThrowLastWinHttpError(const std::string& operation)
+{
+    throw HttpTransportError(operation, GetLastError());
 }
 
 ParsedUrl ParseUrl(const std::string& url, const std::string& url_error_name)
@@ -77,7 +86,7 @@ ParsedUrl ParseUrl(const std::string& url, const std::string& url_error_name)
 
     if (!WinHttpCrackUrl(wide_url.c_str(), static_cast<DWORD>(wide_url.size()), 0, &components))
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpCrackUrl"));
+        ThrowLastWinHttpError("WinHttpCrackUrl");
     }
 
     ParsedUrl parsed;
@@ -106,6 +115,8 @@ ParsedUrl ParseUrl(const std::string& url, const std::string& url_error_name)
 std::wstring RenderHeaders(const std::vector<HttpHeader>& headers)
 {
     std::wstring rendered = L"Content-Type: application/json\r\n";
+    rendered += L"Accept: application/json\r\n";
+    rendered += L"Connection: close\r\n";
     for (const auto& header : headers)
     {
         rendered += ToWideAscii(header.name);
@@ -115,16 +126,120 @@ std::wstring RenderHeaders(const std::vector<HttpHeader>& headers)
     }
     return rendered;
 }
+
+int ReadPositiveEnvironmentInt(const char* name, const int fallback_value)
+{
+    const char* raw_value = std::getenv(name);
+    if (raw_value == nullptr || *raw_value == '\0')
+    {
+        return fallback_value;
+    }
+
+    try
+    {
+        const int value = std::stoi(raw_value);
+        return value > 0 ? value : fallback_value;
+    }
+    catch (...)
+    {
+        return fallback_value;
+    }
+}
+
+void SleepBeforeRetry(const int attempt)
+{
+    const int base_delay_ms = ReadPositiveEnvironmentInt("AGENTGUARD_HTTP_RETRY_DELAY_MS", 750);
+    const int bounded_attempt = std::clamp(attempt, 1, 6);
+    const int delay_ms = std::min(base_delay_ms * bounded_attempt, 5000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+}
 } // namespace
 
-HttpJsonResponse PostJson(
-    const std::string& url,
-    const std::vector<HttpHeader>& headers,
-    const std::string& body,
-    const std::string& url_error_name)
+HttpTransportError::HttpTransportError(std::string operation, const unsigned long error_code)
+    : std::runtime_error(FormatWinHttpErrorMessage(operation, error_code))
+    , operation_(std::move(operation))
+    , error_code_(error_code)
 {
-    const ParsedUrl parsed_url = ParseUrl(url, url_error_name);
+}
 
+HttpTransportError::HttpTransportError(
+    std::string operation,
+    const unsigned long error_code,
+    std::string message)
+    : std::runtime_error(std::move(message))
+    , operation_(std::move(operation))
+    , error_code_(error_code)
+{
+}
+
+const std::string& HttpTransportError::operation() const noexcept
+{
+    return operation_;
+}
+
+unsigned long HttpTransportError::error_code() const noexcept
+{
+    return error_code_;
+}
+
+bool IsTransientWinHttpErrorCode(const unsigned long error_code)
+{
+    return error_code == ERROR_WINHTTP_TIMEOUT ||
+           error_code == ERROR_WINHTTP_CONNECTION_ERROR ||
+           error_code == ERROR_WINHTTP_INVALID_SERVER_RESPONSE ||
+           error_code == ERROR_WINHTTP_OPERATION_CANCELLED ||
+           error_code == ERROR_WINHTTP_RESEND_REQUEST;
+}
+
+int DefaultHttpJsonMaxAttempts()
+{
+    return ReadPositiveEnvironmentInt("AGENTGUARD_HTTP_MAX_ATTEMPTS", 5);
+}
+
+HttpJsonResponse ExecuteHttpJsonWithRetry(const HttpJsonRequest& request, const int max_attempts)
+{
+    if (!request)
+    {
+        throw std::invalid_argument("HTTP JSON request callback cannot be empty.");
+    }
+    if (max_attempts < 1)
+    {
+        throw std::invalid_argument("HTTP JSON max_attempts must be at least 1.");
+    }
+
+    for (int attempt = 1; attempt <= max_attempts; ++attempt)
+    {
+        try
+        {
+            return request();
+        }
+        catch (const HttpTransportError& error)
+        {
+            if (!IsTransientWinHttpErrorCode(error.error_code()) || attempt == max_attempts)
+            {
+                if (attempt > 1)
+                {
+                    std::ostringstream message;
+                    message << error.what() << " Retried " << attempt
+                            << " HTTP attempt(s) because the transport error was transient.";
+                    throw HttpTransportError(error.operation(), error.error_code(), message.str());
+                }
+                throw;
+            }
+            SleepBeforeRetry(attempt);
+        }
+    }
+
+    throw std::runtime_error("HTTP JSON retry loop exited unexpectedly.");
+}
+
+namespace
+{
+HttpJsonResponse PostJsonOnce(
+    const ParsedUrl& parsed_url,
+    const std::vector<HttpHeader>& headers,
+    const std::string& body)
+{
     WinHttpHandle session(WinHttpOpen(
         L"AgentGuardVS-CXX/0.1",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -133,18 +248,18 @@ HttpJsonResponse PostJson(
         0));
     if (!session)
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpOpen"));
+        ThrowLastWinHttpError("WinHttpOpen");
     }
 
     if (!WinHttpSetTimeouts(session.value, 30000, 30000, 120000, 120000))
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpSetTimeouts"));
+        ThrowLastWinHttpError("WinHttpSetTimeouts");
     }
 
     WinHttpHandle connection(WinHttpConnect(session.value, parsed_url.host.c_str(), parsed_url.port, 0));
     if (!connection)
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpConnect"));
+        ThrowLastWinHttpError("WinHttpConnect");
     }
 
     const DWORD request_flags = parsed_url.secure ? WINHTTP_FLAG_SECURE : 0;
@@ -158,7 +273,7 @@ HttpJsonResponse PostJson(
         request_flags));
     if (!request)
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpOpenRequest"));
+        ThrowLastWinHttpError("WinHttpOpenRequest");
     }
 
     const std::wstring rendered_headers = RenderHeaders(headers);
@@ -172,12 +287,12 @@ HttpJsonResponse PostJson(
         0);
     if (!sent)
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpSendRequest"));
+        ThrowLastWinHttpError("WinHttpSendRequest");
     }
 
     if (!WinHttpReceiveResponse(request.value, nullptr))
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpReceiveResponse"));
+        ThrowLastWinHttpError("WinHttpReceiveResponse");
     }
 
     DWORD status_code = 0;
@@ -190,32 +305,41 @@ HttpJsonResponse PostJson(
             &status_code_size,
             WINHTTP_NO_HEADER_INDEX))
     {
-        throw std::runtime_error(LastErrorMessage("WinHttpQueryHeaders"));
+        ThrowLastWinHttpError("WinHttpQueryHeaders");
     }
 
     std::string response_body;
+    char buffer[16384];
     for (;;)
     {
-        DWORD bytes_available = 0;
-        if (!WinHttpQueryDataAvailable(request.value, &bytes_available))
+        DWORD bytes_read = 0;
+        if (!WinHttpReadData(request.value, buffer, sizeof(buffer), &bytes_read))
         {
-            throw std::runtime_error(LastErrorMessage("WinHttpQueryDataAvailable"));
+            ThrowLastWinHttpError("WinHttpReadData");
         }
-        if (bytes_available == 0)
+        if (bytes_read == 0)
         {
             break;
         }
-
-        std::string chunk(bytes_available, '\0');
-        DWORD bytes_read = 0;
-        if (!WinHttpReadData(request.value, chunk.data(), bytes_available, &bytes_read))
-        {
-            throw std::runtime_error(LastErrorMessage("WinHttpReadData"));
-        }
-        chunk.resize(bytes_read);
-        response_body += chunk;
+        response_body.append(buffer, buffer + bytes_read);
     }
 
     return HttpJsonResponse{status_code, response_body};
+}
+} // namespace
+
+HttpJsonResponse PostJson(
+    const std::string& url,
+    const std::vector<HttpHeader>& headers,
+    const std::string& body,
+    const std::string& url_error_name)
+{
+    const ParsedUrl parsed_url = ParseUrl(url, url_error_name);
+
+    return ExecuteHttpJsonWithRetry(
+        [&parsed_url, &headers, &body]() {
+            return PostJsonOnce(parsed_url, headers, body);
+        },
+        DefaultHttpJsonMaxAttempts());
 }
 } // namespace agentguard

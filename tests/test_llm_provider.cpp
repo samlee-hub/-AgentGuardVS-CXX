@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <stdexcept>
 #include <string>
 
@@ -12,6 +13,7 @@
 #include "llm/FileLLMProvider.h"
 #include "llm/ClaudeProvider.h"
 #include "llm/DeepSeekProvider.h"
+#include "llm/HttpJsonClient.h"
 #include "llm/LLMProviderConfig.h"
 #include "llm/OpenAIProvider.h"
 
@@ -25,6 +27,10 @@ using agentguard::DeepSeekProvider;
 using agentguard::LLMProviderConfig;
 using agentguard::LoadLLMProviderConfigFromEnvironment;
 using agentguard::OpenAIProvider;
+using agentguard::ExecuteHttpJsonWithRetry;
+using agentguard::HttpJsonResponse;
+using agentguard::HttpTransportError;
+using agentguard::IsTransientWinHttpErrorCode;
 
 fs::path MakeTempFile()
 {
@@ -200,6 +206,69 @@ TEST(ClaudeProviderTest, MissingApiKeyReturnsClearErrorBeforeNetworkCall)
     catch (const std::runtime_error& error)
     {
         EXPECT_NE(std::string(error.what()).find("ANTHROPIC_API_KEY"), std::string::npos);
+    }
+}
+
+TEST(HttpJsonClientTest, TreatsWinHttpInvalidServerResponseAsTransient)
+{
+    EXPECT_TRUE(IsTransientWinHttpErrorCode(12152));
+    EXPECT_TRUE(IsTransientWinHttpErrorCode(12002));
+    EXPECT_TRUE(IsTransientWinHttpErrorCode(12030));
+    EXPECT_FALSE(IsTransientWinHttpErrorCode(12005));
+}
+
+TEST(HttpJsonClientTest, RetriesTransientTransportErrorsBeforeSucceeding)
+{
+    SetEnvVar("AGENTGUARD_HTTP_RETRY_DELAY_MS", "1");
+    int attempts = 0;
+
+    const auto response = ExecuteHttpJsonWithRetry(
+        [&attempts]() {
+            ++attempts;
+            if (attempts < 3)
+            {
+                throw HttpTransportError("WinHttpQueryDataAvailable", 12152);
+            }
+            return HttpJsonResponse{200, R"({"ok":true})"};
+        },
+        3);
+
+    EXPECT_EQ(attempts, 3);
+    EXPECT_EQ(response.status_code, 200UL);
+    EXPECT_EQ(response.body, R"({"ok":true})");
+    SetEnvVar("AGENTGUARD_HTTP_RETRY_DELAY_MS", "");
+}
+
+TEST(HttpJsonClientTest, ReadsRetryAttemptCountFromEnvironment)
+{
+    SetEnvVar("AGENTGUARD_HTTP_MAX_ATTEMPTS", "6");
+    EXPECT_EQ(agentguard::DefaultHttpJsonMaxAttempts(), 6);
+
+    SetEnvVar("AGENTGUARD_HTTP_MAX_ATTEMPTS", "0");
+    EXPECT_EQ(agentguard::DefaultHttpJsonMaxAttempts(), 5);
+
+    SetEnvVar("AGENTGUARD_HTTP_MAX_ATTEMPTS", "");
+}
+
+TEST(HttpJsonClientTest, DoesNotRetryNonTransientTransportErrors)
+{
+    int attempts = 0;
+
+    try
+    {
+        (void)ExecuteHttpJsonWithRetry(
+            [&attempts]() {
+                ++attempts;
+                throw HttpTransportError("WinHttpCrackUrl", 12005);
+                return HttpJsonResponse{};
+            },
+            3);
+        FAIL() << "Expected non-transient error to be thrown.";
+    }
+    catch (const HttpTransportError& error)
+    {
+        EXPECT_EQ(attempts, 1);
+        EXPECT_EQ(error.error_code(), 12005UL);
     }
 }
 } // namespace

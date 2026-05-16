@@ -2,24 +2,25 @@
 
 AgentGuardVS-CXX is focused first on Visual Studio C++ and MSBuild. The roadmap keeps that path stable before broader expansion.
 
-## P0: Git Baseline And Diff Isolation
+## P0: Installation And Demo
 
 Status: implemented.
 
-- Workspace repos exclude the source `.git`.
-- Each workspace initializes an independent baseline commit.
-- DiffReporter rejects parent Git top-levels.
-- Reports record `git_top_level` and `diff_base`.
+- Source build path for Windows + Visual Studio 2022.
+- Release package layout and installer scripts.
+- `examples/library-system` demo with offline providers.
+- Codex Skill/Plugin local installation path.
 
-## P1: Skill Installation
+## P1: Benchmark And Reports
 
-Status: implemented.
+Status: first version implemented.
 
-- Repository-level `agentguard-vs-cxx` Skill.
-- Wrapper scripts for analyze, verify, review, and demo full-cycle execution.
-- Local install script for Codex Skill directories.
+- Benchmark task JSONL format.
+- Offline benchmark runner.
+- Markdown and JSON reports with metrics and artifacts.
+- LLM response cache with `--no-cache`.
 
-## P2: Symbol And Dependency Graph
+## P2: Symbol Dependency Graph
 
 Status: first version implemented.
 
@@ -28,7 +29,7 @@ Status: first version implemented.
 - Better public-header blast-radius reporting.
 - Test file detection and risk scoring.
 
-## P3: GitHub Action Prototype
+## P3: GitHub Action And CI
 
 Status: first version implemented.
 
@@ -37,12 +38,21 @@ Status: first version implemented.
 - Library demo workflow using fake or file providers.
 - Prototype `agentguard-review` action metadata.
 
-## P4: Broader Integrations
+## Later: Broader Integrations
 
 Status: planned.
 
-- Additional language and IDE support after the Visual Studio C++ workflow is reliable.
+- MCP Server for richer tool integration.
 - More provider adapters.
 - Richer report formats and CI annotations.
+- Additional IDE/platform support after the Visual Studio C++ workflow remains stable.
+
+## Completed Technical Foundations
+
+- Git baseline and diff isolation.
+- Workspace repos exclude the source `.git`.
+- Each workspace initializes an independent baseline commit.
+- DiffReporter rejects parent Git top-levels.
+- Reports record `git_top_level` and `diff_base`.
 
 These items are not commitments to fully autonomous software engineering. They are incremental reliability improvements around agent-assisted development.

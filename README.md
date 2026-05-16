@@ -1,7 +1,7 @@
 # AgentGuardVS-CXX
 
-[![Windows Build](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/windows-build.yml/badge.svg)](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/windows-build.yml)
-[![Library Demo](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/library-demo.yml/badge.svg)](https://github.com/<owner>/AgentGuardVS-CXX/actions/workflows/library-demo.yml)
+[![Windows Build](https://github.com/samlee-hub/-AgentGuardVS-CXX/actions/workflows/windows-build.yml/badge.svg)](https://github.com/samlee-hub/-AgentGuardVS-CXX/actions/workflows/windows-build.yml)
+[![Examples](https://github.com/samlee-hub/-AgentGuardVS-CXX/actions/workflows/examples.yml/badge.svg)](https://github.com/samlee-hub/-AgentGuardVS-CXX/actions/workflows/examples.yml)
 
 AgentGuardVS-CXX is a control layer for AI coding agents working on Visual Studio C++ projects: it analyzes impact scope, isolates edits, runs MSBuild verification, performs LLM-assisted semantic review, and writes audit reports.
 
@@ -50,24 +50,77 @@ Review can return `accept`, `repair`, `expand_scope`, `ask_user`, or `stop`. `as
 - Stable `--json` CLI summaries for agent integration.
 - Auditable Markdown and JSON reports.
 - Repository-level Codex Skill and wrapper scripts.
-- Offline demo path using the built-in file provider.
+- Offline demo paths using the built-in fake and file providers.
 
 ## Quick Start
 
-Requirements: Windows, Visual Studio 2022 or Build Tools with C++ workload, Git, PowerShell, and CMake if you build from source.
+Requirements: Windows, Visual Studio 2022 or Build Tools with the C++ workload, Git, PowerShell, and CMake if you build from source.
+
+### 1 Minute: What This Does
+
+AgentGuardVS-CXX is a guardrail around AI edits to Visual Studio C++ projects. It creates an isolated workspace, classifies the safe edit scope, verifies with MSBuild, performs semantic review, and writes audit reports. The original project is not edited by the platform workflow.
+
+### Source Developer Entry
 
 ```powershell
-git clone https://github.com/<owner>/AgentGuardVS-CXX.git
-cd AgentGuardVS-CXX
+git clone https://github.com/samlee-hub/-AgentGuardVS-CXX.git
+cd -AgentGuardVS-CXX
+.\scripts\bootstrap.ps1
+```
 
+Build from source:
+
+```powershell
 cmake -S . -B build\vs2022-debug -G "Visual Studio 17 2022" -A x64
 cmake --build build\vs2022-debug --config Debug
 
 $env:AGENTGUARD_EXE = (Resolve-Path ".\build\vs2022-debug\Debug\AgentGuardVS.exe").Path
-.\examples\run-library-demo.ps1
+.\scripts\install-plugin.ps1 -Force
 ```
 
-The demo builds the original sample project, runs its self-test, creates an isolated AgentGuard workspace, applies a deterministic example edit inside that workspace, verifies with MSBuild, and runs an offline semantic review.
+### Release User Entry
+
+Download a release zip, extract it, then run:
+
+```powershell
+.\scripts\install.ps1
+agentguard --version
+.\scripts\doctor.ps1
+.\examples\run-library-demo.ps1 -Provider fake
+```
+
+Open a new PowerShell window after `install.ps1` if `agentguard` is not immediately found; user-level `PATH` changes are picked up by new shells.
+
+### Codex User Entry
+
+```powershell
+.\scripts\install-plugin.ps1
+```
+
+Then start Codex in a Visual Studio C++ repository and invoke the installed Skill:
+
+```text
+@AgentGuardVS-CXX Use AgentGuardVS-CXX to safely modify this Visual Studio C++ project.
+```
+
+### Offline And API Routes
+
+No API key is needed for a basic local check:
+
+```powershell
+$env:AGENTGUARD_LLM_PROVIDER = "fake"
+.\examples\run-library-demo.ps1 -Provider fake
+```
+
+Use a real provider only for live semantic analysis and review:
+
+```powershell
+$env:AGENTGUARD_LLM_PROVIDER = "deepseek" # or openai / claude
+$env:AGENTGUARD_DEEPSEEK_MODEL = "<model>"
+$env:DEEPSEEK_API_KEY = "<deepseek-api-key>"
+```
+
+The demo builds the original sample project, runs its self-test, creates an isolated AgentGuard workspace, applies a deterministic example edit inside that workspace, verifies with MSBuild, and runs semantic review.
 
 ## Installation Requirements
 
@@ -79,6 +132,8 @@ The demo builds the original sample project, runs its self-test, creates an isol
 - CMake 3.21+ when building from source.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup and environment variables.
+See [docs/PLUGIN_INSTALL.md](docs/PLUGIN_INSTALL.md) for GitHub-distributed Codex Plugin installation.
+See [docs/RELEASE_PACKAGE.md](docs/RELEASE_PACKAGE.md) for the recommended release zip layout.
 
 ## Build
 
@@ -106,23 +161,23 @@ Provider-specific variables:
 
 Do not write API keys into the repository, Skill files, reports, or logs.
 
-## Install The Codex Skill
+## Install The Codex Plugin / Skill
 
-The repository includes a distributable Skill at `skills/agentguard-vs-cxx`.
+The repository includes a distributable Codex Plugin at `plugins/agentguard-vs-cxx` and the raw Skill at `skills/agentguard-vs-cxx`.
 
 ```powershell
-.\scripts\install-skill.ps1 -AgentGuardExe $env:AGENTGUARD_EXE -Force
+.\scripts\install-plugin.ps1 -AgentGuardExe $env:AGENTGUARD_EXE -Force
 ```
 
-After installation, a new Codex session can use `/skills` to discover `agentguard-vs-cxx`. The Skill tells Codex to call the wrapper scripts first, then fall back to raw CLI commands only when needed.
+After installation, restart Codex and use `@AgentGuardVS-CXX` or `/skills` to discover `agentguard-vs-cxx`. Current distribution is through GitHub clone plus local plugin installation; this README does not claim the plugin is available in an official searchable Plugin Directory.
 
 ## Run The Library-System Demo
 
 ```powershell
-.\examples\run-library-demo.ps1
+.\examples\run-library-demo.ps1 -Provider fake
 ```
 
-The source demo lives in `examples/library-system`. The script does not modify that original project. The edit and verification happen under an isolated workspace in `runs/library-demo`.
+The source demo lives in `examples/library-system`. The script does not modify that original project for code edits. The edit and verification happen under an isolated workspace in `runs/library-demo`.
 
 The demo is intentionally small. It validates the AgentGuard workflow and Skill integration path; it is not evidence that every enterprise C++ project is fully covered.
 
@@ -134,13 +189,34 @@ Reports are written under the task workspace:
 runs/<task_id>/
   repo/
   logs/verify_build.log
+  artifacts/
+    prompts/
+    raw_responses/
+    build_logs/
+    diffs/
+    reports/
   reports/report.md
   reports/report.json
   semantic_scope.json
   semantic_review.json
 ```
 
-`report.json` records source project, workspace repo, Git top-level, diff base, scope lists, build result, review result, and risk notes.
+`report.md` starts with a one-screen summary: accepted status, build result, review next action, whether the source project was modified, modified files, risks, and artifact paths.
+
+`report.json` includes `schema_version`, compatibility fields, and structured sections:
+
+- `task`
+- `source_project`
+- `workspace`
+- `semantic_scope`
+- `build`
+- `review`
+- `diff`
+- `risks`
+- `metrics`
+- `artifacts`
+
+Metrics include analyze, verify, and review duration, changed file counts, build error count, repair rounds, scope expansions, provider, model, and cache hit status.
 
 ## Safety Boundaries
 
@@ -162,6 +238,8 @@ See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) for details.
 - Enterprise-scale repositories still require human review, policy tuning, and project-specific tests.
 - The symbol and dependency analysis is lightweight; it is not a complete C++ compiler or clang-based AST.
 
+See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for a fuller statement of current boundaries.
+
 ## License
 
 AgentGuardVS-CXX is released under the MIT License. MIT is intentionally permissive for this kind of developer tooling: it allows individuals, teams, and companies to adopt or adapt the project while keeping the copyright notice and warranty disclaimer.
@@ -178,4 +256,4 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## GitHub Actions
 
-Initial Windows build and library demo workflows are included under `.github/workflows`. See [docs/GITHUB_ACTION.md](docs/GITHUB_ACTION.md) for the current CI shape and the prototype `agentguard-review` action.
+Initial Windows build and examples workflows are included under `.github/workflows`. See [docs/GITHUB_ACTION.md](docs/GITHUB_ACTION.md) for the current CI shape and the prototype `agentguard-review` action.

@@ -21,6 +21,7 @@ struct DependencyGraph
 struct ImpactAnalysis
 {
     std::vector<std::string> related_symbols;
+    std::vector<std::string> direct_symbol_hits;
     std::vector<std::string> dependency_reasons;
     std::vector<std::string> reverse_include_dependents;
     std::vector<std::string> likely_tests;

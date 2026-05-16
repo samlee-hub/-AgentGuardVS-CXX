@@ -1,0 +1,67 @@
+name: Examples
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  library-system:
+    runs-on: windows-latest
+    env:
+      AGENTGUARD_LLM_PROVIDER: file
+      AGENTGUARD_OPENAI_MODEL: ""
+      AGENTGUARD_DEEPSEEK_MODEL: ""
+      AGENTGUARD_CLAUDE_MODEL: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install vcpkg dependencies
+        shell: pwsh
+        run: vcpkg install --triplet x64-windows
+
+      - name: Configure CMake
+        shell: pwsh
+        run: >
+          cmake -S . -B build\vs2022-debug
+          -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+
+      - name: Build AgentGuardVS-CXX
+        run: cmake --build build\vs2022-debug --config Debug --target AgentGuardVS
+
+      - name: Build library-system example
+        shell: pwsh
+        run: |
+          $msbuild = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe"
+          if (-not (Test-Path $msbuild)) {
+            $msbuild = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe"
+          }
+          if (-not (Test-Path $msbuild)) {
+            $msbuild = "msbuild"
+          }
+          & $msbuild .\examples\library-system\Library.sln /p:Configuration=Debug /p:Platform=x64 /m
+
+      - name: Run library-system self-test
+        shell: pwsh
+        run: .\examples\library-system\x64\Debug\LibraryApp.exe --self-test
+
+      - name: Run AgentGuard demo with offline file provider
+        shell: pwsh
+        run: |
+          $env:AGENTGUARD_EXE = (Resolve-Path ".\build\vs2022-debug\Debug\AgentGuardVS.exe").Path
+          .\examples\run-library-demo.ps1 -AgentGuardExe $env:AGENTGUARD_EXE -Provider file
+
+      - name: Upload sample report
+        uses: actions/upload-artifact@v4
+        with:
+          name: library-demo-report
+          path: |
+            runs/library-demo/**/reports/report.md
+            runs/library-demo/**/reports/report.json
+            runs/library-demo/**/artifacts/build_logs/verify_build.log
+          if-no-files-found: error

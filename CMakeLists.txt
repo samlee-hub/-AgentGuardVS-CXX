@@ -29,7 +29,9 @@ add_library(AgentGuardCore
     src/patching/PatchPlan.cpp
     src/patching/PatchApplier.cpp
     src/patching/DiffReporter.cpp
+    src/security/SecurityPolicy.cpp
     src/llm/ClaudeProvider.cpp
+    src/llm/CachedLLMProvider.cpp
     src/llm/DeepSeekProvider.cpp
     src/llm/FakeLLMProvider.cpp
     src/llm/FileLLMProvider.cpp

@@ -1,5 +1,11 @@
 param(
     [string]$AgentGuardExe = "",
+    [ValidateSet("fake", "file", "openai", "deepseek", "claude")]
+    [string]$Provider = "file",
+    [string]$Model = "",
+    [string]$AnalyzeResponseFile = "",
+    [string]$ReviewResponseFile = "",
+    [string]$Solution = "",
     [string]$Configuration = "Debug",
     [string]$Platform = "x64",
     [string]$RunsRoot = "",
@@ -316,10 +322,17 @@ bool RunLibrarySelfTests()
 $repoRoot = Resolve-RepoRoot
 $agentGuard = Resolve-AgentGuardExe -ExplicitPath $AgentGuardExe -RepoRoot $repoRoot
 $msbuild = Resolve-MSBuild
-$solution = Join-Path $PSScriptRoot "library-system\Library.sln"
+if (-not $Solution) {
+    $Solution = Join-Path $PSScriptRoot "library-system\Library.sln"
+}
+$solution = (Resolve-Path -LiteralPath $Solution).Path
 $taskFile = Join-Path $PSScriptRoot "tasks\add-case-insensitive-title-search.md"
-$scopeResponse = Join-Path $PSScriptRoot "reports\sample-semantic-scope.json"
-$reviewResponse = Join-Path $PSScriptRoot "reports\sample-semantic-review.json"
+if (-not $AnalyzeResponseFile) {
+    $AnalyzeResponseFile = Join-Path $PSScriptRoot "reports\sample-semantic-scope.json"
+}
+if (-not $ReviewResponseFile) {
+    $ReviewResponseFile = Join-Path $PSScriptRoot "reports\sample-semantic-review.json"
+}
 if (-not $RunsRoot) {
     $RunsRoot = Join-Path $repoRoot "runs\library-demo"
 }
@@ -345,16 +358,24 @@ if ($LASTEXITCODE -ne 0) {
 
 $task = Get-Content $taskFile -Raw
 Write-Host "Running AgentGuard analyze..."
-$analyze = Invoke-JsonCommand -Exe $agentGuard -Arguments @(
+$analyzeArguments = @(
     "analyze",
     "--solution", $solution,
     "--task", $task,
-    "--provider", "file",
-    "--response-file", $scopeResponse,
+    "--provider", $Provider,
     "--runs-root", $RunsRoot,
     "--force",
     "--json"
 )
+if ($Provider -eq "file") {
+    $analyzeArguments += @("--response-file", $AnalyzeResponseFile)
+}
+if ($Model) {
+    $analyzeArguments += @("--model", $Model)
+}
+$analyze = Invoke-JsonCommand -Exe $agentGuard -Arguments $analyzeArguments
+
+Write-Host "Semantic scope: $($analyze.semantic_scope)"
 
 if ($SkipDemoEdit) {
     Write-Host "Analyze completed. Demo edit was skipped."
@@ -377,17 +398,24 @@ $verify = Invoke-JsonCommand -Exe $agentGuard -Arguments @(
 )
 
 Write-Host "Running AgentGuard review..."
-$review = Invoke-JsonCommand -Exe $agentGuard -Arguments @(
+$reviewArguments = @(
     "review",
     "--workspace", $analyze.workspace,
     "--task", $task,
-    "--provider", "file",
-    "--response-file", $reviewResponse,
+    "--provider", $Provider,
     "--json"
 )
+if ($Provider -eq "file") {
+    $reviewArguments += @("--response-file", $ReviewResponseFile)
+}
+if ($Model) {
+    $reviewArguments += @("--model", $Model)
+}
+$review = Invoke-JsonCommand -Exe $agentGuard -Arguments $reviewArguments
 
 [pscustomobject]@{
     ok = $true
+    provider = $Provider
     workspace = $analyze.workspace
     semantic_scope = $analyze.semantic_scope
     verify_ok = $verify.ok

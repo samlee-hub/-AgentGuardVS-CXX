@@ -24,6 +24,8 @@ std::string ReadAllText(const std::filesystem::path& path)
         std::istreambuf_iterator<char>());
 }
 
+bool IsControlIdentifier(const std::string& value);
+
 void AppendMatches(
     std::vector<std::string>& output,
     const std::string& content,
@@ -35,6 +37,24 @@ void AppendMatches(
          ++it)
     {
         output.push_back((*it)[group_index].str());
+    }
+}
+
+void AppendIdentifierMatches(
+    std::vector<std::string>& output,
+    const std::string& content,
+    const std::regex& pattern,
+    const std::size_t group_index)
+{
+    for (auto it = std::sregex_iterator(content.begin(), content.end(), pattern);
+         it != std::sregex_iterator();
+         ++it)
+    {
+        const std::string value = (*it)[group_index].str();
+        if (!IsControlIdentifier(value))
+        {
+            output.push_back(value);
+        }
     }
 }
 
@@ -122,7 +142,7 @@ SourceFileInfo IndexCppSymbols(
         1);
     AppendMatches(info.structs, content, std::regex(R"CPP(\bstruct\s+([A-Za-z_]\w*))CPP"), 1);
     AppendMatches(info.enums, content, std::regex(R"CPP(\benum(?:\s+class)?\s+([A-Za-z_]\w*))CPP"), 1);
-    AppendMatches(
+    AppendIdentifierMatches(
         info.functions,
         content,
         std::regex(R"CPP((?:^|[\r\n])\s*[A-Za-z_:<>~*&\s]+\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?\{)CPP"),
@@ -132,6 +152,12 @@ SourceFileInfo IndexCppSymbols(
         info.methods,
         content,
         std::regex(R"CPP(\b([A-Za-z_]\w*::[A-Za-z_]\w*)\s*\()CPP"),
+        1);
+    AppendMatches(
+        info.member_variables,
+        content,
+        std::regex(
+            R"CPP((?:^|[\r\n])\s*(?:static\s+)?(?:const\s+)?(?:std::[A-Za-z_]\w*(?:<[^;\r\n]+>)?|[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?(?:<[^;\r\n]+>)?)[*&\s]+([A-Za-z_]\w*)\s*(?:=[^;\r\n]*)?;)CPP"),
         1);
     AppendMatches(
         info.macros,
@@ -172,6 +198,10 @@ SourceFileInfo IndexCppSymbols(
         AppendUnique(info.keywords, value);
     }
     for (const auto& value : info.symbol_references)
+    {
+        AppendUnique(info.keywords, value);
+    }
+    for (const auto& value : info.member_variables)
     {
         AppendUnique(info.keywords, value);
     }

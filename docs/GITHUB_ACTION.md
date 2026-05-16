@@ -15,13 +15,15 @@ Runs on `windows-latest`:
 
 The workflow sets `AGENTGUARD_LLM_PROVIDER=fake` and does not require API keys.
 
-### `library-demo.yml`
+### `examples.yml`
 
 Runs on `windows-latest`:
 
-1. Build AgentGuardVS-CXX.
-2. Run `examples/run-library-demo.ps1`.
-3. Use the offline `file` provider and sample responses under `examples/reports`.
+1. Build `AgentGuardVS`.
+2. Build `examples/library-system`.
+3. Run the library-system self-test.
+4. Run `examples/run-library-demo.ps1 -Provider file`.
+5. Upload `report.md`, `report.json`, and the verification build log as workflow artifacts.
 
 This validates the demo path without OpenAI, DeepSeek, or Claude network calls.
 

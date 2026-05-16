@@ -12,6 +12,9 @@ jobs:
     runs-on: windows-latest
     env:
       AGENTGUARD_LLM_PROVIDER: fake
+      AGENTGUARD_OPENAI_MODEL: ""
+      AGENTGUARD_DEEPSEEK_MODEL: ""
+      AGENTGUARD_CLAUDE_MODEL: ""
 
     steps:
       - name: Checkout
@@ -31,5 +34,8 @@ jobs:
       - name: Build
         run: cmake --build build\vs2022-debug --config Debug
 
-      - name: Run unit tests
+      - name: Run RUN_TESTS target
+        run: cmake --build build\vs2022-debug --config Debug --target RUN_TESTS
+
+      - name: Run CTest with output
         run: ctest --test-dir build\vs2022-debug -C Debug --output-on-failure

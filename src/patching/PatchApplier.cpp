@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "core/PathUtils.h"
+#include "security/SecurityPolicy.h"
 
 namespace agentguard
 {
@@ -106,6 +107,7 @@ PatchApplyResult ApplyPatchPlan(
     const fs::path normalized_repo_root = NormalizePath(repo_root);
     const auto allowed_files = NormalizeConstraintSet(spec.allowed_files);
     const auto forbidden_files = NormalizeConstraintSet(spec.forbidden_files);
+    const auto security_policy = DefaultSecurityPolicy();
 
     std::vector<PlannedChange> planned_changes;
     planned_changes.reserve(plan.changes.size());
@@ -133,6 +135,7 @@ PatchApplyResult ApplyPatchPlan(
             }
 
             const fs::path absolute_path = NormalizePath(normalized_repo_root / relative_path);
+            ValidateWorkspaceWritePath(security_policy, normalized_repo_root, relative_path);
             if (!IsSubPath(absolute_path, normalized_repo_root))
             {
                 return Fail("Patch target escapes the isolated workspace: " + normalized_target);

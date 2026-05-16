@@ -7,6 +7,8 @@
 #include <set>
 #include <unordered_set>
 
+#include "security/SecurityPolicy.h"
+
 namespace agentguard
 {
 namespace
@@ -87,16 +89,10 @@ bool IsLikelyTest(const std::string& path)
            lowered.find("_spec") != std::string::npos;
 }
 
-bool IsProtectedPath(const std::string& path)
+bool IsProtectedDependencyPath(const std::string& path)
 {
-    const std::string lowered = ToLower(path);
-    return lowered.find(".git/") != std::string::npos ||
-           lowered.find("/third_party/") != std::string::npos ||
-           lowered.find("/external/") != std::string::npos ||
-           lowered.find("/build/") != std::string::npos ||
-           lowered.find("/generated/") != std::string::npos ||
-           lowered.starts_with("build/") ||
-           lowered.starts_with("generated/");
+    static const SecurityPolicy policy = DefaultSecurityPolicy();
+    return IsProtectedPath(policy, path);
 }
 
 std::string ResolveInclude(
@@ -161,7 +157,7 @@ DependencyGraph BuildDependencyGraph(
     {
         const std::string normalized = NormalizePath(file.file_path);
         known_files.insert(normalized);
-        if (IsProtectedPath(normalized))
+        if (IsProtectedDependencyPath(normalized))
         {
             graph.protected_files.push_back(normalized);
         }
@@ -243,6 +239,7 @@ ImpactAnalysis AnalyzeImpact(
         AddUnique(
             impact.related_symbols,
             entry.kind + ":" + entry.name + "@" + entry.file_path);
+        AddUnique(impact.direct_symbol_hits, entry.file_path);
         matched_files.insert(entry.file_path);
     }
 
@@ -303,6 +300,7 @@ ImpactAnalysis AnalyzeImpact(
         std::unique(impact.related_symbols.begin(), impact.related_symbols.end()),
         impact.related_symbols.end());
     std::sort(impact.dependency_reasons.begin(), impact.dependency_reasons.end());
+    std::sort(impact.direct_symbol_hits.begin(), impact.direct_symbol_hits.end());
     std::sort(impact.reverse_include_dependents.begin(), impact.reverse_include_dependents.end());
     std::sort(impact.likely_tests.begin(), impact.likely_tests.end());
     return impact;

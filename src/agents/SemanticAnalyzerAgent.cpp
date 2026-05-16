@@ -7,6 +7,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "security/SecurityPolicy.h"
+
 namespace agentguard
 {
 namespace
@@ -91,6 +93,7 @@ std::string BuildPrompt(const SemanticAnalyzerInput& input)
                << " enums=[" << JoinStrings(file.enums) << "]"
                << " functions=[" << JoinStrings(file.functions) << "]"
                << " methods=[" << JoinStrings(file.methods) << "]"
+               << " member_variables=[" << JoinStrings(file.member_variables) << "]"
                << " macros=[" << JoinStrings(file.macros) << "]"
                << " command_strings=[" << JoinStrings(file.command_strings) << "]"
                << " keywords=[" << JoinStrings(file.keywords) << "]\n";
@@ -98,6 +101,7 @@ std::string BuildPrompt(const SemanticAnalyzerInput& input)
 
     prompt << "Hybrid impact analysis:\n";
     prompt << "- related_symbols=[" << JoinStrings(input.impact.related_symbols) << "]\n";
+    prompt << "- direct_symbol_hits=[" << JoinStrings(input.impact.direct_symbol_hits) << "]\n";
     prompt << "- reverse_include_dependents=[" << JoinStrings(input.impact.reverse_include_dependents) << "]\n";
     prompt << "- likely_tests=[" << JoinStrings(input.impact.likely_tests) << "]\n";
     prompt << "- public_header_risk=" << (input.impact.public_header_risk ? "true" : "false") << "\n";
@@ -165,6 +169,74 @@ std::string ExtractJsonTextFromProviderResponse(const std::string& raw_response)
 
     return json_value.dump();
 }
+
+bool SameSemanticPath(const SemanticFileReference& file, const std::string& path)
+{
+    return file.path == path;
+}
+
+void AddUniqueSemanticFile(
+    std::vector<SemanticFileReference>& files,
+    const SemanticFileReference& file)
+{
+    const auto it = std::find_if(files.begin(), files.end(), [&](const auto& existing) {
+        return SameSemanticPath(existing, file.path);
+    });
+    if (it == files.end())
+    {
+        files.push_back(file);
+    }
+}
+
+void RemoveSecurityProtectedFiles(
+    std::vector<SemanticFileReference>& files,
+    SemanticScopeResult& scope,
+    const SecurityPolicy& policy)
+{
+    auto it = files.begin();
+    while (it != files.end())
+    {
+        if (!IsProtectedPath(policy, it->path) && !IsSecretPath(policy, it->path))
+        {
+            ++it;
+            continue;
+        }
+
+        SemanticFileReference protected_file = *it;
+        protected_file.reason = "SecurityPolicy protected path. Original reason: " + protected_file.reason;
+        protected_file.confidence = 1.0;
+        AddUniqueSemanticFile(scope.protected_files, protected_file);
+        it = files.erase(it);
+    }
+}
+
+void EnforceSecurityPolicy(
+    SemanticScopeResult& scope,
+    const SemanticAnalyzerInput& input)
+{
+    const auto policy = DefaultSecurityPolicy();
+    RemoveSecurityProtectedFiles(scope.allowed_files, scope, policy);
+    RemoveSecurityProtectedFiles(scope.context_files, scope, policy);
+    RemoveSecurityProtectedFiles(scope.suspected_files, scope, policy);
+    RemoveSecurityProtectedFiles(scope.needs_approval_files, scope, policy);
+
+    for (const auto& file : input.relevant_files)
+    {
+        for (const auto& finding : DetectPromptInjectionText(policy, file.relative_path, file.content))
+        {
+            const std::string note =
+                finding.type + ":" + finding.file + ":" + finding.reason;
+            if (std::find(scope.notes.begin(), scope.notes.end(), note) == scope.notes.end())
+            {
+                scope.notes.push_back(note);
+            }
+            if (scope.risk_level == "low")
+            {
+                scope.risk_level = "medium";
+            }
+        }
+    }
+}
 } // namespace
 
 SemanticAnalyzerResult TryAnalyzeSemanticScope(
@@ -179,6 +251,7 @@ SemanticAnalyzerResult TryAnalyzeSemanticScope(
         result.raw_response = provider.GenerateText(result.prompt);
         result.extracted_json_text = ExtractJsonTextFromProviderResponse(result.raw_response);
         result.scope = nlohmann::json::parse(result.extracted_json_text).get<SemanticScopeResult>();
+        EnforceSecurityPolicy(result.scope, input);
         if (result.scope.related_symbols.empty())
         {
             result.scope.related_symbols = input.impact.related_symbols;

@@ -118,6 +118,19 @@ target_link_libraries(test_process_runner
 
 gtest_discover_tests(test_process_runner)
 
+add_executable(test_security_policy
+    test_security_policy.cpp
+)
+
+target_link_libraries(test_security_policy
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_security_policy)
+
 add_executable(test_msbuild_locator
     test_msbuild_locator.cpp
 )
@@ -208,6 +221,19 @@ target_link_libraries(test_llm_provider
 )
 
 gtest_discover_tests(test_llm_provider)
+
+add_executable(test_llm_cache
+    test_llm_cache.cpp
+)
+
+target_link_libraries(test_llm_cache
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_llm_cache)
 
 add_executable(test_semantic_models
     test_semantic_models.cpp

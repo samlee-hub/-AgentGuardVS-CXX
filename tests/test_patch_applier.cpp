@@ -104,6 +104,30 @@ TEST(PatchApplierTest, RejectsTraversalTargets)
     fs::remove_all(repo.parent_path());
 }
 
+TEST(PatchApplierTest, RejectsProtectedPathsEvenWhenAllowed)
+{
+    const fs::path repo = MakeRepo();
+    fs::create_directories(repo / "build");
+
+    TaskSpec spec = MakeSpec();
+    spec.allowed_files.push_back("build\\Generated.cpp");
+
+    PatchPlan plan;
+    plan.changes.push_back(FileChange{
+        "build\\Generated.cpp",
+        "create",
+        "",
+        "int generated = 1;",
+        "must reject protected path"
+    });
+
+    const auto result = ApplyPatchPlan(plan, spec, repo);
+
+    EXPECT_FALSE(result.success);
+    EXPECT_FALSE(fs::exists(repo / "build" / "Generated.cpp"));
+    fs::remove_all(repo.parent_path());
+}
+
 TEST(PatchApplierTest, RejectsMissingOriginalSnippetWithoutPartialWrite)
 {
     const fs::path repo = MakeRepo();

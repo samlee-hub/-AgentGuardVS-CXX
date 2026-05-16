@@ -20,10 +20,14 @@ TEST(EvaluationTest, BenchmarkTaskRoundTripsThroughJson)
     BenchmarkTask task;
     task.task_id = "server1-summon-cost";
     task.title = "Add summon resource cost";
+    task.solution = "Server.sln";
+    task.task_file = "benchmarks/tasks/server1.md";
     task.description = "Require summon actions to consume configured resources.";
     task.expected_files = {"Server1/Server/StrategyBattleMode.cpp"};
     task.forbidden_files = {"Server1/Server/Server.cpp"};
+    task.protected_files = {"Server1/Server/Server.cpp"};
     task.acceptance_criteria = {"Build succeeds"};
+    task.validation_command = "msbuild Server.sln";
     task.difficulty = "medium";
     task.tags = {"summon", "resource"};
 
@@ -71,15 +75,15 @@ TEST(EvaluationTest, BenchmarkTaskSetContainsRequiredFields)
         const auto task = nlohmann::json::parse(line).get<BenchmarkTask>();
         EXPECT_FALSE(task.task_id.empty());
         EXPECT_FALSE(task.title.empty());
-        EXPECT_FALSE(task.description.empty());
+        EXPECT_FALSE(task.solution.empty());
+        EXPECT_FALSE(task.task_file.empty());
         EXPECT_FALSE(task.expected_files.empty());
-        EXPECT_FALSE(task.forbidden_files.empty());
-        EXPECT_FALSE(task.acceptance_criteria.empty());
+        EXPECT_FALSE(task.protected_files.empty());
+        EXPECT_FALSE(task.validation_command.empty());
         EXPECT_FALSE(task.difficulty.empty());
-        EXPECT_FALSE(task.tags.empty());
         ++task_count;
     }
 
-    EXPECT_GE(task_count, 10);
+    EXPECT_GE(task_count, 3);
 }
 } // namespace

@@ -73,6 +73,28 @@ TEST(SymbolIndexTest, FindsDefinitionsReferencesMacrosAndCommandStrings)
     fs::remove_all(root);
 }
 
+TEST(SymbolIndexTest, FindsClassHeaderAndImplementationFiles)
+{
+    const fs::path root = MakeFixtureRoot();
+    WriteText(
+        root / "src" / "LibrarySystem.h",
+        "class LibrarySystem { public: bool FindBook(); private: int borrowed_count_; };\n");
+    WriteText(
+        root / "src" / "LibrarySystem.cpp",
+        "#include \"LibrarySystem.h\"\nbool LibrarySystem::FindBook() { return borrowed_count_ > 0; }\n");
+
+    const std::vector<agentguard::SourceFileInfo> files{
+        agentguard::IndexCppSymbols(root / "src" / "LibrarySystem.h", root),
+        agentguard::IndexCppSymbols(root / "src" / "LibrarySystem.cpp", root)
+    };
+
+    const auto index = agentguard::BuildSymbolIndex(files);
+
+    EXPECT_EQ(agentguard::FindSymbolFiles(index, "LibrarySystem"),
+        (std::vector<std::string>{"src/LibrarySystem.cpp", "src/LibrarySystem.h"}));
+    fs::remove_all(root);
+}
+
 TEST(ImpactAnalysisTest, DetectsTestsAndPublicHeaderBlastRadius)
 {
     const fs::path root = MakeFixtureRoot();
@@ -95,6 +117,12 @@ TEST(ImpactAnalysisTest, DetectsTestsAndPublicHeaderBlastRadius)
         index);
 
     EXPECT_TRUE(impact.public_header_risk);
+    EXPECT_NE(
+        std::find(
+            impact.direct_symbol_hits.begin(),
+            impact.direct_symbol_hits.end(),
+            "include/LibrarySystem.h"),
+        impact.direct_symbol_hits.end());
     EXPECT_EQ(impact.changed_header_blast_radius, "medium");
     EXPECT_EQ(impact.blast_radius, "medium");
     EXPECT_EQ(impact.likely_tests, (std::vector<std::string>{"tests/LibrarySystemTests.cpp"}));

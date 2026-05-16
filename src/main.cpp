@@ -1,10 +1,12 @@
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -37,6 +39,7 @@
 #include "indexing/FileIndexer.h"
 #include "indexing/SymbolIndex.h"
 #include "llm/ClaudeProvider.h"
+#include "llm/CachedLLMProvider.h"
 #include "llm/DeepSeekProvider.h"
 #include "llm/FakeLLMProvider.h"
 #include "llm/FileLLMProvider.h"
@@ -44,6 +47,7 @@
 #include "llm/OpenAIProvider.h"
 #include "patching/DiffReporter.h"
 #include "report/ReportWriter.h"
+#include "security/SecurityPolicy.h"
 #include "vs/MSBuildRunner.h"
 #include "vs/SlnParser.h"
 #include "vs/VcxprojParser.h"
@@ -87,6 +91,7 @@ struct AnalyzeOptions
     std::string runs_root_source = "default";
     bool force = false;
     bool json = false;
+    bool no_cache = false;
 };
 
 struct ReviewOptions
@@ -97,6 +102,7 @@ struct ReviewOptions
     std::string model;
     fs::path response_file;
     bool json = false;
+    bool no_cache = false;
 };
 
 struct VerifyOptions
@@ -270,19 +276,8 @@ std::string ReadTextIfPresent(const fs::path& path)
 
 bool IsAlwaysProtectedPath(const std::string& path)
 {
-    std::string lowered = path;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](const unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return lowered.find(".git/") != std::string::npos ||
-           lowered.find("/third_party/") != std::string::npos ||
-           lowered.find("/external/") != std::string::npos ||
-           lowered.find("/build/") != std::string::npos ||
-           lowered.find("/generated/") != std::string::npos ||
-           lowered.starts_with("third_party/") ||
-           lowered.starts_with("external/") ||
-           lowered.starts_with("build/") ||
-           lowered.starts_with("generated/");
+    static const agentguard::SecurityPolicy policy = agentguard::DefaultSecurityPolicy();
+    return agentguard::IsProtectedPath(policy, path);
 }
 
 std::vector<std::string> SelectAllowedFiles(
@@ -378,6 +373,216 @@ void WriteJsonOrRawText(const fs::path& path, const std::string& content)
     {
         WriteTextFile(path, nlohmann::json{{"raw_text", content}}.dump(2));
     }
+}
+
+struct ArtifactPaths
+{
+    fs::path root;
+    fs::path prompts;
+    fs::path raw_responses;
+    fs::path build_logs;
+    fs::path diffs;
+    fs::path reports;
+};
+
+ArtifactPaths EnsureArtifactPaths(const fs::path& task_root)
+{
+    ArtifactPaths paths;
+    paths.root = task_root / "artifacts";
+    paths.prompts = paths.root / "prompts";
+    paths.raw_responses = paths.root / "raw_responses";
+    paths.build_logs = paths.root / "build_logs";
+    paths.diffs = paths.root / "diffs";
+    paths.reports = paths.root / "reports";
+    agentguard::EnsureDirectory(paths.prompts);
+    agentguard::EnsureDirectory(paths.raw_responses);
+    agentguard::EnsureDirectory(paths.build_logs);
+    agentguard::EnsureDirectory(paths.diffs);
+    agentguard::EnsureDirectory(paths.reports);
+    return paths;
+}
+
+void CopyFileIfPresent(const fs::path& source, const fs::path& destination)
+{
+    if (!fs::exists(source))
+    {
+        return;
+    }
+    agentguard::EnsureDirectory(destination.parent_path());
+    fs::copy_file(source, destination, fs::copy_options::overwrite_existing);
+}
+
+void WriteDiffArtifacts(const ArtifactPaths& artifacts, const agentguard::DiffReport& diff_report)
+{
+    WriteTextFile(artifacts.diffs / "workspace.diff", diff_report.diff_text);
+    WriteTextFile(artifacts.diffs / "workspace.diffstat", diff_report.diff_stat);
+}
+
+std::map<std::string, std::string> BuildArtifactsMap(
+    const fs::path& task_root,
+    const fs::path& report_md = {},
+    const fs::path& report_json = {})
+{
+    const auto artifacts = EnsureArtifactPaths(task_root);
+    std::map<std::string, std::string> result{
+        {"prompts_dir", artifacts.prompts.generic_string()},
+        {"raw_responses_dir", artifacts.raw_responses.generic_string()},
+        {"build_logs_dir", artifacts.build_logs.generic_string()},
+        {"diffs_dir", artifacts.diffs.generic_string()},
+        {"reports_dir", artifacts.reports.generic_string()},
+        {"analyze_prompt", (artifacts.prompts / "semantic_analyze_prompt.txt").generic_string()},
+        {"analyze_raw_response", (artifacts.raw_responses / "semantic_analyze_raw_response.json").generic_string()},
+        {"review_prompt", (artifacts.prompts / "semantic_review_prompt.txt").generic_string()},
+        {"review_raw_response", (artifacts.raw_responses / "semantic_review_raw_response.json").generic_string()},
+        {"build_log", (artifacts.build_logs / "verify_build.log").generic_string()},
+        {"diff_text", (artifacts.diffs / "workspace.diff").generic_string()},
+        {"diff_stat", (artifacts.diffs / "workspace.diffstat").generic_string()}
+    };
+    if (!report_md.empty())
+    {
+        result["report_md"] = report_md.generic_string();
+    }
+    if (!report_json.empty())
+    {
+        result["report_json"] = report_json.generic_string();
+    }
+    return result;
+}
+
+fs::path MetricsPath(const fs::path& task_root)
+{
+    return task_root / "artifacts" / "metrics.json";
+}
+
+nlohmann::json MetricsToJson(const agentguard::ReportMetrics& metrics)
+{
+    return nlohmann::json{
+        {"analyze_duration_ms", metrics.analyze_duration_ms},
+        {"verify_duration_ms", metrics.verify_duration_ms},
+        {"review_duration_ms", metrics.review_duration_ms},
+        {"modified_file_count", metrics.modified_file_count},
+        {"allowed_file_count", metrics.allowed_file_count},
+        {"suspected_file_count", metrics.suspected_file_count},
+        {"protected_file_count", metrics.protected_file_count},
+        {"build_error_count", metrics.build_error_count},
+        {"repair_rounds", metrics.repair_rounds},
+        {"scope_expansions", metrics.scope_expansions},
+        {"provider", metrics.provider},
+        {"model", metrics.model},
+        {"cache_hit", metrics.cache_hit}
+    };
+}
+
+agentguard::ReportMetrics MetricsFromJson(const nlohmann::json& json_value)
+{
+    agentguard::ReportMetrics metrics;
+    metrics.analyze_duration_ms = json_value.value("analyze_duration_ms", 0);
+    metrics.verify_duration_ms = json_value.value("verify_duration_ms", 0);
+    metrics.review_duration_ms = json_value.value("review_duration_ms", 0);
+    metrics.modified_file_count = json_value.value("modified_file_count", 0U);
+    metrics.allowed_file_count = json_value.value("allowed_file_count", 0U);
+    metrics.suspected_file_count = json_value.value("suspected_file_count", 0U);
+    metrics.protected_file_count = json_value.value("protected_file_count", 0U);
+    metrics.build_error_count = json_value.value("build_error_count", 0U);
+    metrics.repair_rounds = json_value.value("repair_rounds", 0);
+    metrics.scope_expansions = json_value.value("scope_expansions", 0);
+    metrics.provider = json_value.value("provider", "");
+    metrics.model = json_value.value("model", "");
+    metrics.cache_hit = json_value.value("cache_hit", false);
+    return metrics;
+}
+
+agentguard::ReportMetrics LoadMetrics(const fs::path& task_root)
+{
+    const auto path = MetricsPath(task_root);
+    if (!fs::exists(path))
+    {
+        return {};
+    }
+    return MetricsFromJson(nlohmann::json::parse(ReadTextIfPresent(path)));
+}
+
+void SaveMetrics(const fs::path& task_root, const agentguard::ReportMetrics& metrics)
+{
+    EnsureArtifactPaths(task_root);
+    WriteTextFile(MetricsPath(task_root), MetricsToJson(metrics).dump(2));
+}
+
+std::string EffectiveModelName(const std::string& provider, const std::string& explicit_model)
+{
+    if (!explicit_model.empty())
+    {
+        return explicit_model;
+    }
+    const auto config = agentguard::LoadLLMProviderConfigFromEnvironment();
+    if (provider == "openai")
+    {
+        return config.openai_model;
+    }
+    if (provider == "deepseek")
+    {
+        return config.deepseek_model;
+    }
+    if (provider == "claude")
+    {
+        return config.claude_model;
+    }
+    if (provider == "file")
+    {
+        return config.file_response_path.string();
+    }
+    return provider;
+}
+
+std::string HashSourceIndex(const std::vector<agentguard::SourceFileInfo>& files)
+{
+    nlohmann::json json_value = nlohmann::json::array();
+    for (const auto& file : files)
+    {
+        json_value.push_back({
+            {"file_path", file.file_path},
+            {"includes", file.includes},
+            {"classes", file.classes},
+            {"structs", file.structs},
+            {"enums", file.enums},
+            {"functions", file.functions},
+            {"methods", file.methods},
+            {"member_variables", file.member_variables},
+            {"macros", file.macros},
+            {"command_strings", file.command_strings},
+            {"symbol_references", file.symbol_references},
+            {"keywords", file.keywords}
+        });
+    }
+    return agentguard::StableHashText(json_value.dump());
+}
+
+std::string HashRelevantFiles(const std::vector<agentguard::RelevantFileContent>& files)
+{
+    nlohmann::json json_value = nlohmann::json::array();
+    for (const auto& file : files)
+    {
+        json_value.push_back({
+            {"relative_path", file.relative_path},
+            {"content_hash", agentguard::StableHashText(file.content)}
+        });
+    }
+    return agentguard::StableHashText(json_value.dump());
+}
+
+std::size_t CountModifiedFilesFromDiff(const agentguard::DiffReport& diff_report)
+{
+    std::size_t count = 0;
+    std::istringstream stream(diff_report.diff_text);
+    std::string line;
+    while (std::getline(stream, line))
+    {
+        if (line.rfind("diff --git ", 0) == 0)
+        {
+            ++count;
+        }
+    }
+    return count;
 }
 
 nlohmann::json MakeFakeSemanticReviewJson()
@@ -1040,6 +1245,7 @@ int RunAnalyzeCommand(const AnalyzeOptions& options)
         const auto forbidden_files = BuildForbiddenFiles(symbol_files, allowed_files);
         const auto relevant_contents = LoadRelevantFileContents(workspace.repo_root, allowed_files);
         const auto provider = CreateAnalyzeProvider(options, allowed_files, forbidden_files, impact);
+        const auto artifacts = EnsureArtifactPaths(workspace.task_root);
 
         agentguard::SemanticAnalyzerInput input;
         input.user_request = options.task;
@@ -1052,12 +1258,34 @@ int RunAnalyzeCommand(const AnalyzeOptions& options)
         input.static_forbidden_files = forbidden_files;
         input.impact = impact;
 
-        const auto result = agentguard::TryAnalyzeSemanticScope(input, *provider);
+        const std::string model_name = EffectiveModelName(options.provider, options.model);
+        const std::string cache_key = agentguard::ComputeLLMCacheKey({
+            {"kind", "analyze"},
+            {"task", options.task},
+            {"project_index_hash", HashSourceIndex(symbol_files)},
+            {"relevant_file_hash", HashRelevantFiles(relevant_contents)},
+            {"provider", options.provider},
+            {"model", model_name}
+        });
+        agentguard::CachedLLMProvider cached_provider(
+            *provider,
+            workspace.task_root.parent_path() / "_llm_cache",
+            cache_key,
+            options.no_cache || options.provider == "file");
+
+        const auto analyze_start = std::chrono::steady_clock::now();
+        const auto result = agentguard::TryAnalyzeSemanticScope(input, cached_provider);
+        const auto analyze_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - analyze_start).count();
 
         WriteTextFile(workspace.task_root / "semantic_analyze_prompt.txt", result.prompt);
+        WriteTextFile(artifacts.prompts / "semantic_analyze_prompt.txt", result.prompt);
         if (!result.raw_response.empty())
         {
             WriteJsonOrRawText(workspace.task_root / "semantic_analyze_raw_response.json", result.raw_response);
+            WriteJsonOrRawText(
+                artifacts.raw_responses / "semantic_analyze_raw_response.json",
+                result.raw_response);
         }
 
         if (!result.success)
@@ -1110,6 +1338,20 @@ int RunAnalyzeCommand(const AnalyzeOptions& options)
         report_spec.max_repair_rounds = 0;
 
         const auto diff_report = agentguard::CaptureWorkspaceDiff(workspace.repo_root);
+        WriteDiffArtifacts(artifacts, diff_report);
+        agentguard::ReportMetrics metrics;
+        metrics.analyze_duration_ms = analyze_duration_ms;
+        metrics.modified_file_count = CountModifiedFilesFromDiff(diff_report);
+        metrics.allowed_file_count = result.scope.allowed_files.size();
+        metrics.suspected_file_count = result.scope.suspected_files.size();
+        metrics.protected_file_count = result.scope.protected_files.size();
+        metrics.build_error_count = 0;
+        metrics.repair_rounds = 0;
+        metrics.scope_expansions = 0;
+        metrics.provider = options.provider;
+        metrics.model = model_name;
+        metrics.cache_hit = cached_provider.cache_hit();
+        SaveMetrics(workspace.task_root, metrics);
         agentguard::ReportWriteRequest report_request;
         report_request.reports_directory = workspace.reports_root;
         report_request.source_project = source_root;
@@ -1118,7 +1360,14 @@ int RunAnalyzeCommand(const AnalyzeOptions& options)
         report_request.task_spec = report_spec;
         report_request.related_files = report_spec.allowed_files;
         report_request.diff_report = diff_report;
+        report_request.metrics = metrics;
+        report_request.artifacts = BuildArtifactsMap(
+            workspace.task_root,
+            workspace.reports_root / "report.md",
+            workspace.reports_root / "report.json");
         const auto report = agentguard::WriteReport(report_request);
+        CopyFileIfPresent(report.markdown_path, artifacts.reports / "report.md");
+        CopyFileIfPresent(report.json_path, artifacts.reports / "report.json");
 
         if (options.json)
         {
@@ -1134,6 +1383,7 @@ int RunAnalyzeCommand(const AnalyzeOptions& options)
                 {"semantic_scope_path", (workspace.task_root / "semantic_scope.json").string()},
                 {"report", report.markdown_path.string()},
                 {"report_json", report.json_path.string()},
+                {"cache_hit", cached_provider.cache_hit()},
                 {"counts", {
                     {"allowed", result.scope.allowed_files.size()},
                     {"context", result.scope.context_files.size()},
@@ -1229,12 +1479,39 @@ int RunReviewCommand(const ReviewOptions& options)
         input.relevant_files = LoadSemanticReviewFileContents(repo_root, scope);
 
         const auto provider = CreateReviewProvider(options);
-        const auto result = agentguard::TryReviewSemanticChange(input, *provider);
+        const auto artifacts = EnsureArtifactPaths(task_root);
+        const std::string model_name = EffectiveModelName(options.provider, options.model);
+        const std::string diff_hash = agentguard::StableHashText(input.diff_text);
+        const std::string build_log_hash = agentguard::StableHashText(build_result.stdout_text + build_result.stderr_text);
+        const std::string cache_key = agentguard::ComputeLLMCacheKey({
+            {"kind", "review"},
+            {"task", options.task},
+            {"project_index_hash", agentguard::StableHashText(nlohmann::json(scope).dump())},
+            {"relevant_file_hash", HashRelevantFiles(input.relevant_files)},
+            {"diff_hash", diff_hash},
+            {"build_log_hash", build_log_hash},
+            {"provider", options.provider},
+            {"model", model_name}
+        });
+        agentguard::CachedLLMProvider cached_provider(
+            *provider,
+            task_root.parent_path() / "_llm_cache",
+            cache_key,
+            options.no_cache || options.provider == "file");
+
+        const auto review_start = std::chrono::steady_clock::now();
+        const auto result = agentguard::TryReviewSemanticChange(input, cached_provider);
+        const auto review_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - review_start).count();
 
         WriteTextFile(task_root / "semantic_review_prompt.txt", result.prompt);
+        WriteTextFile(artifacts.prompts / "semantic_review_prompt.txt", result.prompt);
         if (!result.raw_response.empty())
         {
             WriteJsonOrRawText(task_root / "semantic_review_raw_response.json", result.raw_response);
+            WriteJsonOrRawText(
+                artifacts.raw_responses / "semantic_review_raw_response.json",
+                result.raw_response);
         }
 
         if (!result.success)
@@ -1252,6 +1529,67 @@ int RunReviewCommand(const ReviewOptions& options)
         }
 
         WriteTextFile(task_root / "semantic_review.json", nlohmann::json(result.review).dump(2));
+        WriteDiffArtifacts(artifacts, diff_report);
+
+        auto metrics = LoadMetrics(task_root);
+        metrics.review_duration_ms = review_duration_ms;
+        metrics.modified_file_count = CountModifiedFilesFromDiff(diff_report);
+        metrics.allowed_file_count = scope.allowed_files.size();
+        metrics.suspected_file_count = scope.suspected_files.size();
+        metrics.protected_file_count = scope.protected_files.size();
+        metrics.build_error_count = build_result.parsed_errors.size();
+        metrics.repair_rounds = 0;
+        metrics.scope_expansions = result.review.requires_scope_expansion ? 1 : 0;
+        metrics.provider = options.provider;
+        metrics.model = model_name;
+        metrics.cache_hit = cached_provider.cache_hit();
+        SaveMetrics(task_root, metrics);
+
+        agentguard::TaskSpec report_spec;
+        report_spec.user_request = options.task;
+        report_spec.has_semantic_scope = true;
+        report_spec.semantic_scope = scope;
+        for (const auto& file : scope.allowed_files)
+        {
+            report_spec.allowed_files.push_back(file.path);
+        }
+        for (const auto& file : scope.context_files)
+        {
+            report_spec.context_files.push_back(file.path);
+        }
+        for (const auto& file : scope.suspected_files)
+        {
+            report_spec.suspected_files.push_back(file.path);
+        }
+        for (const auto& file : scope.protected_files)
+        {
+            report_spec.protected_files.push_back(file.path);
+            report_spec.forbidden_files.push_back(file.path);
+        }
+        for (const auto& file : scope.needs_approval_files)
+        {
+            report_spec.needs_approval_files.push_back(file.path);
+        }
+        agentguard::ReportWriteRequest report_request;
+        report_request.reports_directory = task_root / "reports";
+        report_request.source_project = task_root;
+        report_request.workspace_repo = repo_root;
+        report_request.source_modified = "false";
+        report_request.task_spec = report_spec;
+        report_request.related_files = report_spec.allowed_files;
+        report_request.build_result = build_result;
+        report_request.diff_report = diff_report;
+        report_request.semantic_review = result.review;
+        report_request.review_next_action = result.review.next_action;
+        report_request.metrics = metrics;
+        report_request.risk_warnings = result.review.notes;
+        report_request.artifacts = BuildArtifactsMap(
+            task_root,
+            task_root / "reports" / "report.md",
+            task_root / "reports" / "report.json");
+        const auto report = agentguard::WriteReport(report_request);
+        CopyFileIfPresent(report.markdown_path, artifacts.reports / "report.md");
+        CopyFileIfPresent(report.json_path, artifacts.reports / "report.json");
 
         if (options.json)
         {
@@ -1262,10 +1600,13 @@ int RunReviewCommand(const ReviewOptions& options)
                 {"workspace", task_root.string()},
                 {"semantic_review_path", (task_root / "semantic_review.json").string()},
                 {"semantic_review", (task_root / "semantic_review.json").string()},
+                {"report", report.markdown_path.string()},
+                {"report_json", report.json_path.string()},
                 {"next_action", result.review.next_action},
                 {"requires_scope_expansion", result.review.requires_scope_expansion},
                 {"risk_count", result.review.risks.size()},
                 {"confidence", result.review.confidence},
+                {"cache_hit", cached_provider.cache_hit()},
                 {"diff", {
                     {"git_top_level", diff_report.git_top_level.string()},
                     {"diff_base", diff_report.diff_base},
@@ -1341,6 +1682,7 @@ int RunVerifyCommand(const VerifyOptions& options)
             options.configuration,
             options.platform);
         build_result.parsed_errors = agentguard::ParseBuildErrors(build_result);
+        const auto artifacts = EnsureArtifactPaths(task_root);
 
         const fs::path log_path = task_root / "logs" / "verify_build.log";
         std::string log;
@@ -1349,6 +1691,66 @@ int RunVerifyCommand(const VerifyOptions& options)
         log += "Stdout:\n" + build_result.stdout_text + "\n";
         log += "Stderr:\n" + build_result.stderr_text + "\n";
         WriteTextFile(log_path, log);
+        WriteTextFile(artifacts.build_logs / "verify_build.log", log);
+
+        auto metrics = LoadMetrics(task_root);
+        metrics.verify_duration_ms = build_result.duration_ms;
+        metrics.build_error_count = build_result.parsed_errors.size();
+        SaveMetrics(task_root, metrics);
+
+        agentguard::TaskSpec report_spec;
+        report_spec.target_solution = solution.string();
+        const fs::path scope_path = task_root / "semantic_scope.json";
+        if (fs::exists(scope_path))
+        {
+            report_spec.has_semantic_scope = true;
+            report_spec.semantic_scope = nlohmann::json::parse(ReadTextIfPresent(scope_path))
+                .get<agentguard::SemanticScopeResult>();
+            for (const auto& file : report_spec.semantic_scope.allowed_files)
+            {
+                report_spec.allowed_files.push_back(file.path);
+            }
+            for (const auto& file : report_spec.semantic_scope.suspected_files)
+            {
+                report_spec.suspected_files.push_back(file.path);
+            }
+            for (const auto& file : report_spec.semantic_scope.protected_files)
+            {
+                report_spec.protected_files.push_back(file.path);
+                report_spec.forbidden_files.push_back(file.path);
+            }
+            for (const auto& file : report_spec.semantic_scope.needs_approval_files)
+            {
+                report_spec.needs_approval_files.push_back(file.path);
+            }
+        }
+        agentguard::DiffReport diff_report;
+        try
+        {
+            diff_report = agentguard::CaptureWorkspaceDiff(repo_root);
+        }
+        catch (const std::exception& exception)
+        {
+            diff_report.warnings.push_back(exception.what());
+        }
+        WriteDiffArtifacts(artifacts, diff_report);
+        agentguard::ReportWriteRequest report_request;
+        report_request.reports_directory = task_root / "reports";
+        report_request.source_project = task_root;
+        report_request.workspace_repo = repo_root;
+        report_request.source_modified = "false";
+        report_request.task_spec = report_spec;
+        report_request.related_files = report_spec.allowed_files;
+        report_request.build_result = build_result;
+        report_request.diff_report = diff_report;
+        report_request.metrics = metrics;
+        report_request.artifacts = BuildArtifactsMap(
+            task_root,
+            task_root / "reports" / "report.md",
+            task_root / "reports" / "report.json");
+        const auto report = agentguard::WriteReport(report_request);
+        CopyFileIfPresent(report.markdown_path, artifacts.reports / "report.md");
+        CopyFileIfPresent(report.json_path, artifacts.reports / "report.json");
 
         if (options.json)
         {
@@ -1367,7 +1769,10 @@ int RunVerifyCommand(const VerifyOptions& options)
                     {"parsed_errors", build_result.parsed_errors.size()}
                 }},
                 {"artifacts", {
-                    {"log", log_path.string()}
+                    {"log", log_path.string()},
+                    {"build_log", (artifacts.build_logs / "verify_build.log").string()},
+                    {"report", report.markdown_path.string()},
+                    {"report_json", report.json_path.string()}
                 }},
                 {"log_path", log_path.string()}
             }.dump() << "\n";
@@ -1437,6 +1842,7 @@ int AppMain(int argc, char** argv)
     auto* analyze_runs_root =
         analyze->add_option("--runs-root", analyze_options.runs_root, "Root directory for isolated runs.");
     analyze->add_flag("--force", analyze_options.force, "Overwrite an existing task workspace.");
+    analyze->add_flag("--no-cache", analyze_options.no_cache, "Bypass LLM response cache for this analyze call.");
     analyze->add_flag("--json", analyze_options.json, "Print a machine-readable JSON summary.");
 
     VerifyOptions verify_options;
@@ -1454,6 +1860,7 @@ int AppMain(int argc, char** argv)
         ->default_val("fake");
     review->add_option("--model", review_options.model, "Model name for network-backed providers.");
     review->add_option("--response-file", review_options.response_file, "Response file for --provider file.");
+    review->add_flag("--no-cache", review_options.no_cache, "Bypass LLM response cache for this review call.");
     review->add_flag("--json", review_options.json, "Print a machine-readable JSON summary.");
 
     CLI11_PARSE(app, argc, argv);
