@@ -181,6 +181,29 @@ The source demo lives in `examples/library-system`. The script does not modify t
 
 The demo is intentionally small. It validates the AgentGuard workflow and Skill integration path; it is not evidence that every enterprise C++ project is fully covered.
 
+## Reliability Evaluation
+
+AgentGuardVS-CXX was evaluated with an agent-autonomous black-box test on a self-developed Visual Studio C++ multiplayer networking project.
+
+In 12 natural-language coding tasks, Codex autonomously discovered and invoked the AgentGuardVS-CXX Skill in 12/12 tasks, generated isolated workspaces and audit reports in 12/12 tasks, and caused 0/12 source repository pollution. One task exposed an unauthorized modification caused by inaccurate fake-provider scope analysis, which is tracked as a current limitation.
+
+Summary:
+
+Metric
+Result
+Skill autonomous usage
+12/12 = 100%
+Workspace isolation
+12/12 = 100%
+Source repository pollution
+0/12 = 0%
+Report generation
+12/12 = 100%
+Unauthorized modification
+1/12 = 8.33%
+Build pass rate among verified tasks
+6/6 = 100%。
+
 ## Report Example
 
 Reports are written under the task workspace:
