@@ -204,6 +204,12 @@ Unauthorized modification
 Build pass rate among verified tasks
 6/6 = 100%。
 
+## AgentGuard Bench
+
+This repository also includes [AgentGuard Bench](benchmarks/AgentGuardBench), a reproducible raw-vs-guarded AI coding agent evaluation framework for a real Visual Studio C++ multiplayer game architecture testbed.
+
+The benchmark defines 12 machine-readable tasks, isolated run preparation, raw and guarded prompts, scope checking, MSBuild verification, semantic checks, failure classification, and CSV/Markdown/HTML reports. Current generated reports are baseline prepared-run evidence; run raw and guarded agent executions inside the prepared workspaces before treating the metrics as comparative model results.
+
 ## Report Example
 
 Reports are written under the task workspace:

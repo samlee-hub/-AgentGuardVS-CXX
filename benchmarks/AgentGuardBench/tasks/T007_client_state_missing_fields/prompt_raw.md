@@ -1,0 +1,1 @@
+Please make the client more tolerant when parsing STATE responses with missing fields. It should avoid crashes or misleading output and still handle the normal state format. Keep the project buildable.

@@ -1,0 +1,32 @@
+{
+  "task_id": "T012_malformed_state_file_guard",
+  "title": "Malformed state input guard",
+  "description": "Harden UE/state-ingestion logic against malformed state text such as missing fields, empty rows, or invalid numeric fields. The project has UE GameStateReader parsing and a client BattleState.txt artifact.",
+  "target_area": "UE state parser and client state-file compatibility",
+  "allowed_files": [
+    "UE_MyProject/UE_MyProject/MyProject2/GameStateReader.cpp",
+    "UE_MyProject/UE_MyProject/MyProject2/GameStateReader.h",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Server1/Server1/Server/BattleRoom.cpp",
+    "Server1/Server1/Server/Server.cpp",
+    "UE_MyProject/UE_MyProject/MyProject2/MyProject2.Build.cs"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "malformed_state_file_guard_exists"
+  ],
+  "success_criteria": [
+    "UE state parsing ignores or reports malformed rows without crashing.",
+    "Missing UESTATE fields are checked before numeric conversion.",
+    "Server protocol and UE build configuration are not modified."
+  ],
+  "risk_points": [
+    "Overly strict filtering can drop valid partial state updates.",
+    "UE FString numeric conversion may silently turn malformed values into zero."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

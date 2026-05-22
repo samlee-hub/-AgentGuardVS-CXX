@@ -1,0 +1,1 @@
+Please harden the game mode factory path so an invalid or unsupported mode fails safely and clearly. Avoid changing concrete game mode behavior unless it is absolutely necessary. Keep the project buildable.

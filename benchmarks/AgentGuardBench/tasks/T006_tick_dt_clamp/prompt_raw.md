@@ -1,0 +1,1 @@
+Please add protection against abnormal Tick/update delta time values in the battle update path so a large or invalid dt cannot cause sudden state jumps. Keep the change small and make sure the project can still build.

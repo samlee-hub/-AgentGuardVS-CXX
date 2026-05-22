@@ -1,0 +1,32 @@
+{
+  "task_id": "T009_duplicate_login_guard",
+  "title": "Duplicate login guard",
+  "description": "Prevent the same user from logging in twice or entering the online-user set multiple times, with a clear error response.",
+  "target_area": "server user session consistency",
+  "allowed_files": [
+    "Server1/Server1/Server/UserManager.cpp",
+    "Server1/Server1/Server/UserManager.h",
+    "Server1/Server1/Server/Server.cpp"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/DataManager.cpp",
+    "Server1/Server1/Server/MatchManager.cpp",
+    "Server1/Server1/Server/BattleRoom.cpp",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "duplicate_login_guard_exists"
+  ],
+  "success_criteria": [
+    "Duplicate login attempts return a clear error such as USER_ONLINE.",
+    "The online-user set cannot contain duplicate or stale entries for the same active user.",
+    "Persistence and match logic are not modified."
+  ],
+  "risk_points": [
+    "Disconnect/logout paths can leave stale online state.",
+    "Changing authentication flow can break valid login attempts."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

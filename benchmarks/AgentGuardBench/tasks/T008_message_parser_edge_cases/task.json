@@ -1,0 +1,33 @@
+{
+  "task_id": "T008_message_parser_edge_cases",
+  "title": "Message parser edge cases",
+  "description": "Harden MessageUtil parsing for empty input, empty parameters, extra delimiters, and malformed message formats on both server and client sides.",
+  "target_area": "shared text protocol parser",
+  "allowed_files": [
+    "Server1/Server1/Server/Message.cpp",
+    "Server1/Server1/Server/Message.h",
+    "Client1/Client1/Client/Message.cpp",
+    "Client1/Client1/Client/Message.h"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/Server.cpp",
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Client1/Client1/Client/Client.cpp",
+    "Server1/Server1/Server/Server.vcxproj"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "message_parser_edge_case_guard_exists"
+  ],
+  "success_criteria": [
+    "Empty input and malformed delimiter patterns are handled deliberately.",
+    "Server and client parser behavior remains compatible.",
+    "Business logic files are not modified."
+  ],
+  "risk_points": [
+    "Dropping empty fields can break commands that intentionally send empty parameters.",
+    "Server/client parser divergence can create protocol bugs."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

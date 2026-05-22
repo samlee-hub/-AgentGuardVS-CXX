@@ -1,0 +1,1 @@
+Please harden the state ingestion path against malformed state text, missing fields, empty unit rows, or invalid numeric values. The project includes UE GameStateReader parsing and a BattleState.txt artifact. Keep the project buildable.

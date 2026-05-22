@@ -1,0 +1,31 @@
+{
+  "task_id": "T011_battle_result_once",
+  "title": "Battle result settled once",
+  "description": "Ensure battle records and user result updates are written at most once per battle, even if Tick observes game-over state repeatedly.",
+  "target_area": "battle settlement idempotency",
+  "allowed_files": [
+    "Server1/Server1/Server/BattleRoom.cpp",
+    "Server1/Server1/Server/BattleRoom.h"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/DataManager.cpp",
+    "Server1/Server1/Server/UserManager.cpp",
+    "Server1/Server1/Server/Logger.cpp",
+    "Server1/Server1/Server/StrategyBattleMode.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "battle_result_once_guard_exists"
+  ],
+  "success_criteria": [
+    "Battle record writing is guarded by a one-time flag.",
+    "User result update is guarded by a one-time flag.",
+    "Persistence implementations are not modified."
+  ],
+  "risk_points": [
+    "Separate record and user-result flags can get out of sync.",
+    "Disconnect paths may suppress legitimate result persistence."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

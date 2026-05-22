@@ -1,0 +1,31 @@
+{
+  "task_id": "T007_client_state_missing_fields",
+  "title": "Client STATE missing-field compatibility",
+  "description": "Make client STATE parsing/display tolerate older or incomplete STATE responses without crashing or printing misleading data.",
+  "target_area": "client protocol compatibility",
+  "allowed_files": [
+    "Client1/Client1/Client/Client.cpp",
+    "Client1/Client1/Client/Client.h"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Server1/Server1/Server/Server.cpp",
+    "Client1/Client1/Client/Client.vcxproj",
+    "UE_MyProject/UE_MyProject/MyProject2/GameStateReader.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "client_state_missing_fields_guard_exists"
+  ],
+  "success_criteria": [
+    "Client checks STATE parameter count before reading fields.",
+    "Missing optional fields produce safe defaults or clear format errors.",
+    "Server protocol output is not modified."
+  ],
+  "risk_points": [
+    "Overly strict parsing can reject older valid responses.",
+    "Loose parsing can display shifted fields."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

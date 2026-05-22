@@ -1,0 +1,31 @@
+{
+  "task_id": "T002_summon_global_cooldown",
+  "title": "Summon global cooldown",
+  "description": "Ensure summon commands are protected by a global per-player cooldown such as 3 seconds between summons, including an explicit cooldown error response.",
+  "target_area": "server summon business rule",
+  "allowed_files": [
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Server1/Server1/Server/StrategyBattleMode.h"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/Unit.cpp",
+    "Server1/Server1/Server/Unit.h",
+    "Server1/Server1/Server/Server.cpp",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "summon_global_cooldown_exists"
+  ],
+  "success_criteria": [
+    "A player cannot summon repeatedly within the configured cooldown window.",
+    "Cooldown failures return an ERROR with a clear cooldown reason.",
+    "The change stays in the game-mode logic."
+  ],
+  "risk_points": [
+    "Cooldown may accidentally apply globally to both players instead of per player.",
+    "Cooldown updates may not tick down correctly."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

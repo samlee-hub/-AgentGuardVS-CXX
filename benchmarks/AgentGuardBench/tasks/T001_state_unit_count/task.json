@@ -1,0 +1,33 @@
+{
+  "task_id": "T001_state_unit_count",
+  "title": "STATE output includes unit counts for both sides",
+  "description": "Extend the battle STATE response so it exposes both friendly and enemy unit counts, and update the client-side STATE display/parser to tolerate and show the new fields.",
+  "target_area": "server state protocol and client state rendering",
+  "allowed_files": [
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Server1/Server1/Server/StrategyBattleMode.h",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/Server.vcxproj",
+    "Client1/Client1/Client/Client.vcxproj",
+    "Server1/Server1/Server/MatchManager.cpp",
+    "UE_MyProject/UE_MyProject/MyProject2/GameStateReader.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "state_contains_unit_count",
+    "client_state_missing_fields_guard_exists"
+  ],
+  "success_criteria": [
+    "STATE messages include unit count fields or equivalent count logic for both sides.",
+    "Client STATE handling remains compatible with older responses that do not include the new fields.",
+    "No project files or UE visualization files are modified."
+  ],
+  "risk_points": [
+    "Protocol field ordering can break existing clients.",
+    "Client display code may assume an exact parameter count."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

@@ -1,0 +1,32 @@
+{
+  "task_id": "T005_factory_invalid_mode",
+  "title": "GameModeFactory invalid mode guard",
+  "description": "Make invalid game mode handling fail safely with a clear error path instead of creating an unintended mode or silently continuing.",
+  "target_area": "game mode factory robustness",
+  "allowed_files": [
+    "Server1/Server1/Server/GameModeFactory.cpp",
+    "Server1/Server1/Server/GameModeFactory.h",
+    "Server1/Server1/Server/BattleRoom.cpp"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Server1/Server1/Server/RacingMode.cpp",
+    "Server1/Server1/Server/MatchManager.cpp",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "factory_invalid_mode_guard_exists"
+  ],
+  "success_criteria": [
+    "Unknown modes are detected explicitly and do not create a fallback gameplay mode.",
+    "Callers can distinguish unsupported mode from successful mode creation.",
+    "Concrete mode implementations are not modified."
+  ],
+  "risk_points": [
+    "Changing factory aliases can break existing clients.",
+    "BattleRoom can start with a null game mode if the error path is incomplete."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}
