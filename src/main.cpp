@@ -46,6 +46,8 @@
 #include "llm/LLMProviderConfig.h"
 #include "llm/OpenAIProvider.h"
 #include "patching/DiffReporter.h"
+#include "project/CommandVerifier.h"
+#include "project/ProjectProfile.h"
 #include "report/ReportWriter.h"
 #include "security/SecurityPolicy.h"
 #include "vs/MSBuildRunner.h"
@@ -110,6 +112,18 @@ struct VerifyOptions
     fs::path workspace;
     std::string configuration = "Debug";
     std::string platform = "x64";
+    bool json = false;
+};
+
+struct DetectOptions
+{
+    fs::path project;
+    bool json = false;
+};
+
+struct VerifyProfileOptions
+{
+    fs::path project;
     bool json = false;
 };
 
@@ -1188,6 +1202,88 @@ int RunLlmSmokeCommand(const LlmSmokeOptions& options)
     }
 }
 
+int RunDetectCommand(const DetectOptions& options)
+{
+    try
+    {
+        const auto profile = agentguard::DetectProjectProfile(options.project);
+        if (options.json)
+        {
+            std::cout << nlohmann::json{
+                {"ok", true},
+                {"command", "detect"},
+                {"profile", profile}
+            }.dump() << "\n";
+        }
+        else
+        {
+            std::cout << "Project type: " << agentguard::ProjectTypeToString(profile.project_type) << "\n";
+            std::cout << "Adapter: " << profile.adapter << "\n";
+            std::cout << "Root: " << profile.root.string() << "\n";
+            std::cout << "Verify steps: " << profile.verify_steps.size() << "\n";
+        }
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        if (options.json)
+        {
+            return EmitJsonError(
+                "detect",
+                "PROJECT_DETECT_FAILED",
+                exception.what(),
+                "Check that --project points to an existing project directory.");
+        }
+        std::cerr << exception.what() << "\n";
+        return 1;
+    }
+}
+
+int RunVerifyProfileCommand(const VerifyProfileOptions& options)
+{
+    try
+    {
+        const auto profile = agentguard::DetectProjectProfile(options.project);
+        const auto verification =
+            agentguard::VerifyCommandProfile(profile, agentguard::ProcessRunner());
+
+        if (options.json)
+        {
+            std::cout << nlohmann::json{
+                {"ok", verification.success},
+                {"command", "verify-profile"},
+                {"profile", profile},
+                {"verification", verification}
+            }.dump() << "\n";
+        }
+        else
+        {
+            std::cout << "Profile verification: "
+                      << (verification.success ? "passed" : "failed") << "\n";
+            for (const auto& step : verification.steps)
+            {
+                std::cout << "- " << step.name
+                          << " return_code=" << step.return_code
+                          << " success=" << (step.success ? "true" : "false") << "\n";
+            }
+        }
+        return verification.success ? 0 : 1;
+    }
+    catch (const std::exception& exception)
+    {
+        if (options.json)
+        {
+            return EmitJsonError(
+                "verify-profile",
+                "PROFILE_VERIFY_FAILED",
+                exception.what(),
+                "Check agentguard.json verify_steps and executable paths.");
+        }
+        std::cerr << exception.what() << "\n";
+        return 1;
+    }
+}
+
 int RunAnalyzeCommand(const AnalyzeOptions& options)
 {
     try
@@ -1852,6 +1948,23 @@ int AppMain(int argc, char** argv)
     verify->add_option("--platform", verify_options.platform, "MSBuild platform.")->default_val("x64");
     verify->add_flag("--json", verify_options.json, "Print a machine-readable JSON summary.");
 
+    DetectOptions detect_options;
+    auto* detect = app.add_subcommand("detect", "Detect a generic project profile.");
+    detect->add_option("--project", detect_options.project, "Path to the target project root.")->required();
+    detect->add_flag("--json", detect_options.json, "Print a machine-readable JSON summary.");
+
+    VerifyProfileOptions verify_profile_options;
+    auto* verify_profile =
+        app.add_subcommand("verify-profile", "Run configured generic project verification commands.");
+    verify_profile->add_option(
+        "--project",
+        verify_profile_options.project,
+        "Path to the target project root.")->required();
+    verify_profile->add_flag(
+        "--json",
+        verify_profile_options.json,
+        "Print a machine-readable JSON summary.");
+
     ReviewOptions review_options;
     auto* review = app.add_subcommand("review", "Review semantic completeness after a patch or build failure.");
     review->add_option("--workspace", review_options.workspace, "Workspace task root or repo directory.")->required();
@@ -1881,6 +1994,16 @@ int AppMain(int argc, char** argv)
         if (*verify)
         {
             return RunVerifyCommand(verify_options);
+        }
+
+        if (*detect)
+        {
+            return RunDetectCommand(detect_options);
+        }
+
+        if (*verify_profile)
+        {
+            return RunVerifyProfileCommand(verify_profile_options);
         }
 
         if (*review)

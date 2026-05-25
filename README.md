@@ -210,6 +210,43 @@ This repository also includes [AgentGuard Bench](benchmarks/AgentGuardBench), a 
 
 The benchmark defines 12 machine-readable tasks, isolated run preparation, raw and guarded prompts, scope checking, MSBuild verification, semantic checks, failure classification, and CSV/Markdown/HTML reports. Current generated reports are baseline prepared-run evidence; run raw and guarded agent executions inside the prepared workspaces before treating the metrics as comparative model results.
 
+## Generic Project Profiles
+
+AgentGuardVS-CXX now includes an initial generic project profile layer. Visual Studio C++ remains the primary workflow, but the platform can also detect project roots and run explicit command-profile verification steps.
+
+Detect a project profile:
+
+```powershell
+AgentGuardVS.exe detect --project "<path-to-project-root>" --json
+```
+
+Run configured verification commands:
+
+```powershell
+AgentGuardVS.exe verify-profile --project "<path-to-project-root>" --json
+```
+
+Optional `agentguard.json` example:
+
+```json
+{
+  "project_type": "custom",
+  "adapter": "command-profile",
+  "source_roots": ["src"],
+  "test_roots": ["tests"],
+  "protected_files": [".env"],
+  "verify_steps": [
+    {
+      "name": "unit",
+      "executable": "C:\\Windows\\System32\\cmd.exe",
+      "arguments": ["/C", "npm test"]
+    }
+  ]
+}
+```
+
+Automatic detection currently recognizes Visual Studio C++, CMake C++, Node/web, Python, .NET, Java, Unreal, custom, and unknown project roots. This generic layer is additive; existing `analyze`, `verify`, `review`, and `run` commands continue to use the Visual Studio C++ workflow.
+
 ## Report Example
 
 Reports are written under the task workspace:

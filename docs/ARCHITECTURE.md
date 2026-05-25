@@ -9,6 +9,8 @@ AgentGuardVS-CXX is organized as a local command-line control layer around exter
 - `analyze`: create an isolated workspace and produce `semantic_scope.json`.
 - `verify`: run MSBuild in the isolated workspace and write build logs.
 - `review`: review the workspace diff and build result after edits.
+- `detect`: detect a generic project profile from a project root.
+- `verify-profile`: run configured generic verification commands from `agentguard.json`.
 - `run`: execute the older end-to-end repair-loop path.
 - `llm-smoke`: manually test provider connectivity.
 
@@ -49,6 +51,12 @@ The review action can be `accept`, `repair`, `expand_scope`, `ask_user`, or `sto
 ## MSBuildVerifier
 
 `MSBuildVerifier` locates the solution inside the workspace and invokes MSBuild with the requested configuration and platform. It writes `logs/verify_build.log` and returns a compact build summary for CLI JSON output and reports.
+
+## Generic Project Profile Layer
+
+`src/project` is the first generalization layer beyond Visual Studio C++. It detects project roots from common markers such as `.sln`, `.vcxproj`, `package.json`, `pyproject.toml`, `CMakeLists.txt`, `.csproj`, Java build files, and `.uproject`.
+
+An optional `agentguard.json` file can override the detected type and define explicit `verify_steps`. `verify-profile` executes those steps through the existing `ProcessRunner` and returns structured command results. This layer is additive and does not replace the MSBuild-backed Visual Studio C++ workflow.
 
 ## ErrorParser And ErrorClassifier
 

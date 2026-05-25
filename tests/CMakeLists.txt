@@ -118,6 +118,32 @@ target_link_libraries(test_process_runner
 
 gtest_discover_tests(test_process_runner)
 
+add_executable(test_project_profile
+    test_project_profile.cpp
+)
+
+target_link_libraries(test_project_profile
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_project_profile)
+
+add_executable(test_command_verifier
+    test_command_verifier.cpp
+)
+
+target_link_libraries(test_command_verifier
+    PRIVATE
+        AgentGuardCore
+        GTest::gtest
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_command_verifier)
+
 add_executable(test_security_policy
     test_security_policy.cpp
 )
