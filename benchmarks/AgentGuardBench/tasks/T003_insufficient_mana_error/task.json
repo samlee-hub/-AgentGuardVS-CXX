@@ -1,0 +1,31 @@
+{
+  "task_id": "T003_insufficient_mana_error",
+  "title": "Explicit insufficient mana error",
+  "description": "When a summon cannot be performed because the player lacks resources, return a clear ERROR instead of silently failing or returning a generic response.",
+  "target_area": "server summon validation and client error display",
+  "allowed_files": [
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/DataManager.cpp",
+    "Server1/Server1/Server/MatchManager.cpp",
+    "Server1/Server1/Server/GameModeFactory.cpp",
+    "Server1/Server1/Server/Server.vcxproj"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "insufficient_mana_error_exists"
+  ],
+  "success_criteria": [
+    "Resource shortage returns MessageTypes::Error with a meaningful code such as NOT_ENOUGH_MANA.",
+    "Client output recognizes and displays the resource shortage error.",
+    "No persistence, match, or project configuration files are modified."
+  ],
+  "risk_points": [
+    "Changing resource deduction order can introduce negative resources.",
+    "Client error mapping can drift from server error codes."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

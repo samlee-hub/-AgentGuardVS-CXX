@@ -1,0 +1,6 @@
+﻿{
+  "source_repo": "<external-path>\\frame",
+  "bench_root": "<external-path>\\AgentGuardBench",
+  "created_for": "AgentGuard Bench raw-vs-guarded AI coding agent evaluation",
+  "source_repo_policy": "read_only"
+}

@@ -1,0 +1,37 @@
+{
+  "name": "agentguard-vs-cxx",
+  "version": "0.1.0",
+  "description": "AgentGuard multi-project workflow controls for scoped, verified, auditable AI coding tasks.",
+  "author": "AgentGuardVS-CXX contributors",
+  "repository": "https://github.com/samlee-hub/-AgentGuardVS-CXX",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "multi-project",
+    "visual-studio",
+    "cpp",
+    "msbuild",
+    "cmake",
+    "python",
+    "node",
+    "dotnet",
+    "java",
+    "agent-safety",
+    "audit"
+  ],
+  "skills": "./skills/",
+  "assets": "./assets/",
+  "interface": {
+    "displayName": "AgentGuardVS-CXX",
+    "shortDescription": "Guardrails and audit workflow for multi-project agent edits.",
+    "longDescription": "Runs AgentGuardVS-CXX project-profile analyze, verify, and review workflows so Codex can scope changes, restrict edits to allowed files, run MSBuild or configured command verification, and report audit artifacts. Visual Studio C++ is the mature path; other project types depend on ProjectProfile and verify_commands.",
+    "capabilities": [
+      "ProjectProfile detection for Visual Studio C++, CMake, Python, Node, .NET, Java, Unreal, and custom projects",
+      "Semantic scope analysis for isolated workspaces",
+      "Allowed/protected file workflow enforcement",
+      "MSBuild and command-profile verification",
+      "Semantic review wrapper",
+      "Report and artifact path reporting"
+    ]
+  }
+}

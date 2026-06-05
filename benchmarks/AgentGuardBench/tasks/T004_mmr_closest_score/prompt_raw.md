@@ -1,0 +1,1 @@
+Please improve matchmaking so when multiple players are waiting, the selected opponent is the one with the closest score/MMR to the anchor player. Preserve the existing waiting behavior and keep the project buildable.

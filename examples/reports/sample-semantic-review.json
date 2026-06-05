@@ -1,0 +1,11 @@
+{
+  "meets_requirement": true,
+  "requires_scope_expansion": false,
+  "suggested_scope_additions": [],
+  "risks": [],
+  "confidence": 0.86,
+  "next_action": "accept",
+  "notes": [
+    "Sample offline review accepts the deterministic demo patch after build verification."
+  ]
+}

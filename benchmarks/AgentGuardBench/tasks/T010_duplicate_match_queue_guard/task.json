@@ -1,0 +1,32 @@
+{
+  "task_id": "T010_duplicate_match_queue_guard",
+  "title": "Duplicate match queue guard",
+  "description": "Prevent the same player/socket from entering the match queue multiple times while already waiting or already in a room.",
+  "target_area": "match queue consistency",
+  "allowed_files": [
+    "Server1/Server1/Server/MatchManager.cpp",
+    "Server1/Server1/Server/MatchManager.h",
+    "Server1/Server1/Server/Server.cpp"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/BattleRoom.cpp",
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Server1/Server1/Server/UserManager.cpp",
+    "Client1/Client1/Client/Client.vcxproj"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "duplicate_match_queue_guard_exists"
+  ],
+  "success_criteria": [
+    "Repeated MATCH requests while waiting do not create duplicate queue entries.",
+    "Players already in a room receive a clear error.",
+    "Battle simulation and project files are not modified."
+  ],
+  "risk_points": [
+    "Socket-based checks can miss username duplicates after reconnect.",
+    "Pending match results must not be dropped accidentally."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

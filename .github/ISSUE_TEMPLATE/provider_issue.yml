@@ -1,0 +1,35 @@
+name: Provider Issue
+description: Report an OpenAI, DeepSeek, Claude, fake, or file provider problem.
+title: "[Provider]: "
+labels: ["provider"]
+body:
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - fake
+        - file
+        - openai
+        - deepseek
+        - claude
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Leave blank for fake/file if not applicable.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Behavior
+      description: Describe the request, response shape, error code, or invalid JSON.
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Redacted Artifacts
+      description: Include redacted prompt/raw response snippets if safe. Do not include API keys.
+      render: text

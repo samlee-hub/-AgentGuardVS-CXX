@@ -1,0 +1,31 @@
+{
+  "task_id": "T004_mmr_closest_score",
+  "title": "Closest-score matchmaking",
+  "description": "Match waiting players by choosing opponents with the closest score/MMR rather than arbitrary queue order once players are eligible.",
+  "target_area": "match queue strategy",
+  "allowed_files": [
+    "Server1/Server1/Server/MatchManager.cpp",
+    "Server1/Server1/Server/MatchManager.h"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/BattleRoom.cpp",
+    "Server1/Server1/Server/StrategyBattleMode.cpp",
+    "Server1/Server1/Server/UserManager.cpp",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "mmr_closest_score_logic_exists"
+  ],
+  "success_criteria": [
+    "Match selection compares score differences and prefers the closest score.",
+    "Existing wait-time eligibility is preserved.",
+    "No battle simulation or client UI files are modified."
+  ],
+  "risk_points": [
+    "Sorting can invalidate indexes before removal.",
+    "Score lookup failure behavior must remain explicit."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

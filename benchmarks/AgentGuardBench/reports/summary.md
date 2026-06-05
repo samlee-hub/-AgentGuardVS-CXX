@@ -1,0 +1,57 @@
+﻿# AgentGuard Bench Summary
+
+## Raw vs Guarded Summary
+
+All current rows have zero modified files, so this report reflects prepared-run baseline verification rather than completed raw-vs-guarded agent executions.
+
+| Metric | Value |
+| --- | ---: |
+| Total verification rows | 24 |
+| codex_raw run count | 12 |
+| codex_guarded run count | 12 |
+| Raw success rate | 0.00% |
+| Guarded success rate | 0.00% |
+| Raw build pass rate | 0.00% |
+| Guarded build pass rate | 0.00% |
+| Raw scope violation rate | 0.00% |
+| Guarded scope violation rate | 0.00% |
+| Raw semantic pass rate | 91.67% |
+| Guarded semantic pass rate | 91.67% |
+
+## failure_type Distribution
+
+| failure_type | Count |
+| --- | ---: |
+| `BUILD_FAILURE` | 24 |
+
+## Raw vs Guarded By Task
+
+| Task | Raw final_success | Raw failure_type | Guarded final_success | Guarded failure_type |
+| --- | --- | --- | --- | --- |
+| `T001_state_unit_count` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T002_summon_global_cooldown` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T003_insufficient_mana_error` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T004_mmr_closest_score` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T005_factory_invalid_mode` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T006_tick_dt_clamp` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T007_client_state_missing_fields` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T008_message_parser_edge_cases` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T009_duplicate_login_guard` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T010_duplicate_match_queue_guard` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T011_battle_result_once` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+| `T012_malformed_state_file_guard` | false | `BUILD_FAILURE` | false | `BUILD_FAILURE` |
+
+## Typical Failure Cases
+
+- `T001_state_unit_count` / `codex_guarded`: `BUILD_FAILURE`, build_pass=false, scope_pass=true, semantic_pass=true, failed_checks=[], manual_review=[]
+- `T001_state_unit_count` / `codex_raw`: `BUILD_FAILURE`, build_pass=false, scope_pass=true, semantic_pass=true, failed_checks=[], manual_review=[]
+- `T002_summon_global_cooldown` / `codex_guarded`: `BUILD_FAILURE`, build_pass=false, scope_pass=true, semantic_pass=true, failed_checks=[], manual_review=[]
+- `T002_summon_global_cooldown` / `codex_raw`: `BUILD_FAILURE`, build_pass=false, scope_pass=true, semantic_pass=true, failed_checks=[], manual_review=[]
+- `T003_insufficient_mana_error` / `codex_guarded`: `BUILD_FAILURE`, build_pass=false, scope_pass=true, semantic_pass=true, failed_checks=[], manual_review=[]
+
+## Current Limitations
+
+- If all rows have zero modified files, the report is only a baseline verification of prepared workspaces.
+- `<external-path>\frame` currently has `.vcxproj` files but no `.sln`, so MSBuild solution verification reports `NO_SOLUTION_FOUND` until project-level build support or solution generation is added.
+- Semantic checks are first-version source-text heuristics and should be treated as benchmark oracles with manual review for ambiguous cases.
+- Data is from one real project copy, so conclusions are internal first-version evidence rather than a broad model leaderboard.

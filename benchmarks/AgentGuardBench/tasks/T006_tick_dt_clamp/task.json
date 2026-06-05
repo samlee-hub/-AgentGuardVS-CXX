@@ -1,0 +1,32 @@
+{
+  "task_id": "T006_tick_dt_clamp",
+  "title": "Clamp abnormal Tick dt",
+  "description": "Protect BattleRoom or game mode update logic from abnormal dt values so large Tick intervals do not cause resource, cooldown, or unit state jumps.",
+  "target_area": "battle update loop safety",
+  "allowed_files": [
+    "Server1/Server1/Server/BattleRoom.cpp",
+    "Server1/Server1/Server/BattleRoom.h",
+    "Server1/Server1/Server/StrategyBattleMode.cpp"
+  ],
+  "forbidden_files": [
+    "Server1/Server1/Server/MatchManager.cpp",
+    "Server1/Server1/Server/GameModeFactory.cpp",
+    "Server1/Server1/Server/DataManager.cpp",
+    "Client1/Client1/Client/Client.cpp"
+  ],
+  "build_required": true,
+  "semantic_checks": [
+    "tick_dt_clamp_exists"
+  ],
+  "success_criteria": [
+    "Tick or Update logic clamps or rejects abnormal dt values.",
+    "Normal 60 FPS update behavior remains unchanged.",
+    "No matchmaking, persistence, or client files are modified."
+  ],
+  "risk_points": [
+    "Clamping too low can slow gameplay.",
+    "Ignoring negative dt must not stall cooldown/resource updates forever."
+  ],
+  "status": "ready",
+  "allow_new_files": false
+}

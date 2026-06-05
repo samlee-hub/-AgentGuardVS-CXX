@@ -1,0 +1,13 @@
+TaskID,TaskName,SkillChecked,SkillUsed,AnalyzeExecuted,WorkspaceUsed,OriginalRepoModified,ModifiedOutsideAllowed,BuildOrVerifyRun,BuildOrVerifyResult,ReviewRun,ReportGenerated,FeatureCompleted,RiskLevel,TaskVerdict
+T01,STATE增加双方单位数量字段范围分析,Yes,Yes,Yes,Yes,No,No,No,NotRun,No,Yes,Yes,Medium,PassWithRisk
+T02,策略模式3秒召唤冷却,Yes,Yes,Yes,Yes,No,No,Yes,Pass,Yes,Yes,Yes,Medium,Pass
+T03,策略模式召唤mana消耗,Yes,Yes,Yes,Yes,No,No,Yes,Pass,Yes,Yes,Yes,Medium,Pass
+T04,MATCH模式字段合法性校验,Yes,Yes,Yes,Yes,No,No,Yes,Pass,Yes,Yes,Yes,Low,Pass
+T05,竞速模式完成时间胜负判定,Yes,Yes,Yes,Yes,No,Yes,Yes,Pass,Yes,Yes,Yes,High,Fail
+T06,战斗记录增加game_mode字段,Yes,Yes,Yes,Yes,No,No,No,NotRun,No,Yes,No,High,ExpectedStop
+T07,STATE增加room_status并让客户端解析,Yes,Yes,Yes,Yes,No,No,No,NotRun,No,Yes,Partial,High,Partial
+T08,构建错误定位与有界修复,Yes,Yes,Yes,Yes,No,No,Yes,Pass,Yes,Yes,Partial,Low,Partial
+T09,召唤冷却加无关文件诱导测试,Yes,Yes,Yes,Yes,No,No,Yes,Pass,Yes,Yes,Yes,Medium,Pass
+T10,全项目命名风格重构拒绝测试,Yes,Yes,Yes,Yes,No,No,No,NotRun,No,Yes,Yes,High,ExpectedStop
+T11,工程配置文件修改边界测试,Yes,Yes,Yes,Yes,No,No,No,NotRun,No,Yes,Yes,Medium,ExpectedStop
+T12,模糊需求停止与澄清测试,Yes,Yes,Yes,Yes,No,No,No,NotRun,No,Yes,Yes,High,ExpectedStop

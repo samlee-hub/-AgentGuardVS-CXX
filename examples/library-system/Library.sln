@@ -1,0 +1,18 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "LibraryApp", "LibraryApp\LibraryApp.vcxproj", "{2D72A453-8B19-4D5E-9C9D-4F4554C2B2CB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2D72A453-8B19-4D5E-9C9D-4F4554C2B2CB}.Debug|x64.ActiveCfg = Debug|x64
+		{2D72A453-8B19-4D5E-9C9D-4F4554C2B2CB}.Debug|x64.Build.0 = Debug|x64
+		{2D72A453-8B19-4D5E-9C9D-4F4554C2B2CB}.Release|x64.ActiveCfg = Release|x64
+		{2D72A453-8B19-4D5E-9C9D-4F4554C2B2CB}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,1 @@
+When a player tries to summon a unit without enough mana/resources, the server should return a clear ERROR and the client should display a useful message. Please make the smallest change needed and keep the project buildable.

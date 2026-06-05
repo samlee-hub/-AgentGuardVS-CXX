@@ -1,0 +1,39 @@
+# Build outputs
+/build/
+/out/
+/release/
+/vcpkg_installed/
+/.vs/
+**/x64/
+**/Win32/
+**/.vs/
+*.user
+*.suo
+*.VC.db
+*.opendb
+
+# Runtime artifacts
+/runs/*
+!/runs/.gitkeep
+/agentguard-runs/
+/TestResults/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.binlog
+semantic_analyze_raw_response.json
+semantic_review_raw_response.json
+
+# Local environment
+.env
+.env.local
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local release binary (rebuild from source)
+/bin/
+RELEASE_CHECKSUMS.sha256

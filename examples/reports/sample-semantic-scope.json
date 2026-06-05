@@ -1,0 +1,57 @@
+{
+  "task_summary": "Add case-insensitive title keyword search to the LibrarySystem demo and add self-tests.",
+  "allowed_files": [
+    {
+      "path": "LibraryApp/LibrarySystem.h",
+      "reason": "Declares the LibrarySystem public interface that needs the new search method.",
+      "confidence": 0.95
+    },
+    {
+      "path": "LibraryApp/LibrarySystem.cpp",
+      "reason": "Implements LibrarySystem behavior and should contain the case-insensitive search logic.",
+      "confidence": 0.95
+    },
+    {
+      "path": "LibraryApp/LibraryTests.cpp",
+      "reason": "Contains console self-tests that should cover the new search behavior.",
+      "confidence": 0.9
+    }
+  ],
+  "context_files": [
+    {
+      "path": "LibraryApp/Book.h",
+      "reason": "Defines the Book data structure returned by search.",
+      "confidence": 0.8
+    },
+    {
+      "path": "LibraryApp/main.cpp",
+      "reason": "Shows how self-tests are executed by the console app.",
+      "confidence": 0.75
+    }
+  ],
+  "suspected_files": [],
+  "protected_files": [
+    {
+      "path": "LibraryApp/LibraryApp.vcxproj",
+      "reason": "Project file changes are not needed for this task.",
+      "confidence": 0.8
+    }
+  ],
+  "needs_approval_files": [],
+  "risk_level": "low",
+  "recommendation": "proceed",
+  "related_symbols": [
+    "class:LibrarySystem@LibraryApp/LibrarySystem.h",
+    "function:FindBook@LibraryApp/LibrarySystem.cpp"
+  ],
+  "dependency_reasons": [
+    "LibraryApp/LibrarySystem.h included by LibraryApp/LibrarySystem.cpp",
+    "LibraryApp/LibrarySystem.h included by LibraryApp/LibraryTests.cpp"
+  ],
+  "blast_radius": "medium",
+  "public_interface_changes": true,
+  "missing_context": [],
+  "notes": [
+    "Sample response for offline demo execution with FileLLMProvider."
+  ]
+}
